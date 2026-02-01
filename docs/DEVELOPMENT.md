@@ -1,0 +1,237 @@
+# Development Guide
+
+This document is for developers working on excali-builder. It explains the architecture, design decisions, and where to find/modify specific functionality.
+
+## Purpose
+
+excali-builder converts structured data (CSV or Markdown files) into Excalidraw diagrams with persistent layout. The key innovation is the **two-way sync**: content comes from source files, but layout (positions/sizes) is preserved from user edits in Excalidraw.
+
+## Core Concepts
+
+### Connection Types
+
+The system distinguishes two fundamentally different types of connections:
+
+1. **Container connections** (`connection_type: "container"`): 
+   - Represent grouping/hierarchy relationships
+   - Children are visually grouped with their parent
+   - No arrows drawn - just visual proximity and Excalidraw groups
+   - Example: A module containing its components
+
+2. **Line connections** (`connection_type: "line"`):
+   - Represent relationships between nodes
+   - Rendered as arrows/lines in Excalidraw
+   - Can have arrowheads, different colors, styles
+   - Example: A dependency arrow between services
+
+### Stable IDs
+
+Every node has a stable ID that persists across rebuilds. This ID is:
+- Stored in Excalidraw element's `customData.node_id`
+- Used to match positions from `positions.json` to nodes
+- Must be unique within a project folder
+
+### Data Flow
+
+```
+Build Flow:
+  Source Files (CSV/MD) 
+    → Parser 
+    → Graph IR (nodes + edges) 
+    → Merge positions.json 
+    → Layout for new nodes 
+    → Excalidraw export
+
+Sync Flow:
+  Excalidraw file 
+    → Extract geometry by node_id from customData 
+    → Update positions.json
+```
+
+## Architecture
+
+```
+excali_builder/
+├── core/           # Data models (Node, Edge, Graph)
+├── parsers/        # Input format parsers (CSV, Markdown)
+├── config/         # Configuration loading and schemas
+├── layout/         # Positioning algorithms
+├── excalidraw/     # Excalidraw import/export/sync
+├── builder.py      # Main orchestration
+└── cli.py          # Command-line interface
+```
+
+### Module Responsibilities
+
+#### `core/` - Data Models
+
+| File | Purpose |
+|------|---------|
+| `node.py` | Node model with id, label, type, geometry, metadata |
+| `edge.py` | Edge model with source/target, connection_type, edge_type |
+| `graph.py` | Graph container with nodes dict and edges list |
+
+**Design decision**: Nodes store geometry (x, y, width, height) directly. This is authoritative when loaded from `positions.json`.
+
+#### `parsers/` - Input Parsing
+
+| File | Purpose |
+|------|---------|
+| `base.py` | Abstract `BaseParser` interface |
+| `registry.py` | Parser registration by format name |
+| `csv.py` | CSV parser (node.csv, edge.csv) |
+| `markdown.py` | Markdown parser (headings with anchors) |
+
+**To add a new parser**:
+1. Create new file in `parsers/`
+2. Extend `BaseParser`, implement `parse()` and `get_supported_formats()`
+3. Register in `builder.py`'s `__init__`
+4. Add to `parsers/__init__.py` exports
+
+**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. This keeps source files simple (just edge_type) while config defines behavior.
+
+#### `config/` - Configuration
+
+| File | Purpose |
+|------|---------|
+| `schema.py` | Pydantic models for config validation |
+| `loader.py` | Load JSON config files from folder |
+
+**Config files per project**:
+- `config.json`: Parser type, default layout
+- `node_config.json`: Styling per node type
+- `edge_config.json`: Styling and connection_type per edge type
+
+**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. This means you can change how an edge type behaves (grouping vs arrow) by changing config, not source data.
+
+#### `layout/` - Positioning
+
+| File | Purpose |
+|------|---------|
+| `base.py` | Abstract `BaseLayout` interface |
+| `radial.py` | Radial/circular layout algorithm |
+| `tree.py` | Tree layout algorithm |
+| `positioner.py` | Container child positioning |
+
+**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is.
+
+**Positioner** handles container relationships:
+- Reads `placement` (inside/outside), `direction` (top/bottom/left/right/radial)
+- Positions children relative to parent
+- Respects `child_offset` and `group_padding` from config
+
+#### `excalidraw/` - Excalidraw Integration
+
+| File | Purpose |
+|------|---------|
+| `exporter.py` | Convert Graph to Excalidraw JSON |
+| `importer.py` | Parse Excalidraw JSON files |
+| `sync.py` | Extract positions from Excalidraw to positions.json |
+
+**Exporter creates**:
+- Rectangle/ellipse elements for nodes
+- Text elements bound to shape containers
+- Arrow elements for line connections
+- Groups for container relationships
+- `customData.node_id` for position syncing
+
+**Design decision**: Only node positions are synced, not edge positions. Edges are regenerated from source and bound to nodes, so they auto-update when nodes move.
+
+#### `builder.py` - Orchestration
+
+The `ExcaliBuilder` class coordinates the full pipeline:
+1. Detect parser from `config.json`
+2. Parse source files → Graph
+3. Load `positions.json` → apply to matching nodes
+4. Run layout for unpositioned nodes
+5. Export to Excalidraw
+
+**Design decision**: Build always syncs first (if excalidraw file exists). This means running build after editing in Excalidraw automatically preserves your layout.
+
+#### `cli.py` - Command Line
+
+Simple CLI with one command: `excali-builder <folder>`
+
+Runs sync (if excalidraw exists) then build.
+
+## Common Development Tasks
+
+### Adding a New Node Shape
+
+1. Add shape to `config/schema.py` `NodeTypeConfig.shape` comment
+2. Handle in `excalidraw/exporter.py` `_create_node_element()`
+
+### Adding a New Edge Style Property
+
+1. Add field to `config/schema.py` `EdgeTypeConfig`
+2. Handle in `config/loader.py` `get_line_config()`
+3. Apply in `excalidraw/exporter.py` `_create_edge_element()`
+
+### Adding a New Layout Algorithm
+
+1. Create new file in `layout/`
+2. Extend `BaseLayout`, implement `apply_layout()`
+3. Add to `builder.py` `_apply_layout_to_new_nodes()` selection logic
+
+### Adding a New Parser
+
+1. Create new file in `parsers/`
+2. Extend `BaseParser`:
+   ```python
+   class MyParser(BaseParser):
+       def parse(self, path: Path, options: Dict[str, Any]) -> Graph:
+           # Parse files, create nodes and edges
+           # Use ConfigLoader.get_connection_type() for edge types
+           pass
+       
+       def get_supported_formats(self) -> List[str]:
+           return ["myformat"]
+   ```
+3. Register in `builder.py`:
+   ```python
+   self.parser_registry.register("myformat", MyParser)
+   ```
+4. Export in `parsers/__init__.py`
+
+### Debugging Position Sync Issues
+
+1. Check `customData.node_id` in Excalidraw file matches source IDs
+2. Verify `positions.json` is being written with correct IDs
+3. Check sync runs before build (it should automatically)
+
+## Design Principles
+
+1. **Source files are authoritative for content**: Titles, relationships, types all come from CSV/MD files
+
+2. **Excalidraw is authoritative for layout**: After user edits positions, those are preserved
+
+3. **Edge types define behavior via config**: Whether an edge creates a group or an arrow is determined by `edge_config.json`, not the source file
+
+4. **Stable IDs enable syncing**: Every node needs a unique, stable ID that persists across rebuilds
+
+5. **Parsers produce uniform Graph IR**: Different input formats (CSV, MD) all produce the same internal representation
+
+## Testing Locally
+
+```bash
+# Create an examples folder (gitignored)
+mkdir -p examples/my-test
+
+# Add source files and config to examples/my-test/
+
+# Build
+uv run excali-builder examples/my-test
+
+# Open output.excalidraw in Excalidraw, edit positions, save
+
+# Rebuild (positions are preserved)
+uv run excali-builder examples/my-test
+```
+
+## Code Style
+
+- Use Ruff for linting (configured in pyproject.toml)
+- Only add comments explaining "why", not "how"
+- Keep functions focused and modular
+- Follow existing patterns when adding new features
+
