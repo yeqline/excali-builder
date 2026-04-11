@@ -179,7 +179,11 @@ Always the same:
 ```json
 {
   "parser_type": "md",
-  "default_layout": "radial"
+  "layout": {
+    "direction": "left-right",
+    "level_spacing": 180,
+    "sibling_spacing": 40
+  }
 }
 ```
 
@@ -231,11 +235,8 @@ Always the same:
 ```json
 {
   "parent_child": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+    "connection_type": "line",
+    "arrow_end": "arrow"
   },
   "prereqs": {
     "connection_type": "line",
@@ -263,6 +264,30 @@ Always the same:
   }
 }
 ```
+
+### Built-in link nodes
+
+Use `type: link` when you want a resource node instead of a normal concept node:
+
+```markdown
+### Snowflake Docs {#snowflake-docs}
+
+> [!meta]
+> type: link
+> target: https://docs.snowflake.com/
+```
+
+or:
+
+```markdown
+### Jump To Workflow {#jump-to-workflow}
+
+> [!meta]
+> type: link
+> target: #practical-workflow
+```
+
+If a nested link node does not declare an explicit `link:` edge, the builder automatically adds the built-in `link` edge to its parent.
 
 ---
 
@@ -390,7 +415,11 @@ See also [Status Codes](#status-codes) for error handling in secure connections.
 ```json
 {
   "parser_type": "md",
-  "default_layout": "radial"
+  "layout": {
+    "direction": "left-right",
+    "level_spacing": 180,
+    "sibling_spacing": 40
+  }
 }
 ```
 
@@ -438,11 +467,8 @@ See also [Status Codes](#status-codes) for error handling in secure connections.
 ```json
 {
   "parent_child": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+    "connection_type": "line",
+    "arrow_end": "arrow"
   },
   "prereqs": {
     "connection_type": "line",

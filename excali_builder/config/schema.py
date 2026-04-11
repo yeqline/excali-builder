@@ -1,7 +1,8 @@
-"""Configuration schemas for node and edge styling."""
+"""Configuration schemas for node, edge, and layout settings."""
 
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
+
+from pydantic import BaseModel, Field
 
 
 class NodeTypeConfig(BaseModel):
@@ -16,16 +17,6 @@ class NodeTypeConfig(BaseModel):
     borderRadius: int = 0
 
 
-class ContainerConnectionConfig(BaseModel):
-    """Styling for container-based connections (grouping/hierarchy)."""
-
-    connection_type: str = "container"  # Always "container" for this type
-    placement: str = "outside"  # "inside" or "outside" - whether children are inside parent bounds or positioned outside it
-    direction: str = "bottom"  # "top", "bottom", "left", "right", "radial", "center_h", "center_v" - direction children are arranged relative to parent
-    child_offset: int = 20  # Spacing between parent and children
-    group_padding: int = 15  # Padding around grouped children
-
-
 class LineConnectionConfig(BaseModel):
     """Styling for line-based connections (arrows/relationships)."""
 
@@ -34,19 +25,13 @@ class LineConnectionConfig(BaseModel):
     stroke_width: int = 2
     stroke_style: str = "solid"  # solid, dashed, dotted
     arrow_start: Optional[str] = None  # "arrow", "circle", None
-    arrow_end: Optional[str] = None  # "arrow", "circle", None (defaults to None, can be set to "arrow" if needed)
+    arrow_end: Optional[str] = None  # "arrow", "circle", None
 
 
 class EdgeTypeConfig(BaseModel):
-    """Unified edge type configuration that can be either container or line."""
+    """Edge configuration controlling rendering behavior."""
 
     connection_type: str  # "container" or "line"
-    # Container-specific fields (optional, only for container connections)
-    placement: Optional[str] = None  # "inside" or "outside"
-    direction: Optional[str] = None  # "top", "bottom", "left", "right", "radial", "center_h", "center_v"
-    child_offset: Optional[int] = None  # Spacing between parent and children
-    group_padding: Optional[int] = None  # Padding around grouped children
-    # Line-specific fields (optional, only for line connections)
     color: Optional[str] = None
     stroke_width: Optional[int] = None
     stroke_style: Optional[str] = None  # solid, dashed, dotted
@@ -54,10 +39,20 @@ class EdgeTypeConfig(BaseModel):
     arrow_end: Optional[str] = None  # "arrow", "circle", None
 
 
+class LayoutConfig(BaseModel):
+    """Tree layout settings used for initial placement."""
+
+    direction: str = "left-right"  # left-right, right-left, top-down, bottom-up
+    level_spacing: int = 180
+    sibling_spacing: int = 40
+    root_spacing: int = 100
+    start_x: int = 120
+    start_y: int = 120
+
+
 class GlobalConfig(BaseModel):
-    """Global configuration with node types and connection styles."""
+    """Global configuration with node types, edge styles, and layout."""
 
-    node_types: Dict[str, NodeTypeConfig] = {}
-    edge_types: Dict[str, EdgeTypeConfig] = {}  # Unified edge type configs
-    default_layout: str = "radial"
-
+    node_types: Dict[str, NodeTypeConfig] = Field(default_factory=dict)
+    edge_types: Dict[str, EdgeTypeConfig] = Field(default_factory=dict)
+    layout: LayoutConfig = Field(default_factory=LayoutConfig)

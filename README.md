@@ -7,16 +7,20 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Version control your diagrams**: Keep diagram content in text files (CSV/Markdown), track changes with git
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
-- **Two connection types**: Model both hierarchical grouping (containers) and relationships (arrows)
+- **Simple initial layout**: Fresh builds always start from the same tree layout
+- **Two rendering modes for edges**: Hide hierarchy arrows with `container` or draw them with `line`
+- **Built-in Markdown link nodes**: Create clickable resource/jump nodes with one target each
 
 ## Quick Start
 
-```bash
-# Install
-pip install -e .
+Run the CLI directly with `uv`. No separate install step is required for normal local use.
 
+```bash
 # Build a diagram from a folder
-excali-builder path/to/your-diagram-folder
+uv run excali-builder path/to/your-diagram-folder
+
+# Rebuild layout from scratch but keep saved node sizes
+uv run excali-builder --full-refresh path/to/your-diagram-folder
 ```
 
 ## How It Works
@@ -42,8 +46,8 @@ your-diagram/
 ├── node.csv            # node_id, node_type, node_title, node_text
 ├── edge.csv            # from, to, edge_type, label
 ├── node_config.json    # Styling per node type
-├── edge_config.json    # Styling and behavior per edge type
-├── config.json         # {"parser_type": "csv"}
+├── edge_config.json    # Styling per edge type
+├── config.json         # {"parser_type": "csv", "layout": {...}}
 └── output.excalidraw   # Generated output
 ```
 
@@ -55,29 +59,39 @@ See [CSV Parser Guide](docs/csv-parser-guide.md) for details.
 your-diagram/
 ├── *.md                # Markdown files with ## Heading {#node-id} anchors
 ├── node_config.json    # Styling per node type
-├── edge_config.json    # Styling and behavior per edge type
-├── config.json         # {"parser_type": "md"}
+├── edge_config.json    # Styling per edge type
+├── config.json         # {"parser_type": "md", "layout": {...}}
 └── output.excalidraw   # Generated output
 ```
 
 See [Markdown Parser Guide](docs/md-parser-guide.md) for details.
 
-## Connection Types
+## Layout And Edges
 
-Edges can be one of two types (defined in `edge_config.json`):
+Initial layout is always a tree. The hierarchy comes from `parent_child` edges:
 
-- **Container** (`connection_type: "container"`): Groups child nodes with parent. No arrows, just visual proximity.
+- In Markdown, `parent_child` is created automatically from heading nesting.
+- In CSV, use `edge_type: parent_child` for edges that should define the tree.
+
+`connection_type` only changes how an edge is rendered:
+
+- **Container** (`connection_type: "container"`): No arrow is drawn. Parent and children are grouped in Excalidraw.
 - **Line** (`connection_type: "line"`): Draws arrows/lines between nodes.
+
+In Markdown, there is also a built-in `link` node type:
+
+- a `link` node has one `target`
+- `target: https://...` creates an external link
+- `target: #node-id` creates an internal Excalidraw jump
+- if a nested `link` node does not declare an explicit `link:` edge, the builder automatically connects it to its parent with the built-in `link` edge style
 
 Example `edge_config.json`:
 
 ```json
 {
   "parent_child": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30
+    "connection_type": "line",
+    "arrow_end": "arrow"
   },
   "depends_on": {
     "connection_type": "line",
@@ -88,11 +102,24 @@ Example `edge_config.json`:
 }
 ```
 
+Example `config.json`:
+
+```json
+{
+  "parser_type": "md",
+  "layout": {
+    "direction": "left-right",
+    "level_spacing": 180,
+    "sibling_spacing": 40
+  }
+}
+```
+
 ## Documentation
 
 - [CSV Parser Guide](docs/csv-parser-guide.md) — How to use CSV files
 - [Markdown Parser Guide](docs/md-parser-guide.md) — How to use Markdown files
-- [Development Guide](docs/DEVELOPMENT.md) — For contributors: architecture, adding parsers, etc.
+- [Development Guide](docs/development-guide.md) — For contributors: architecture, adding parsers, etc.
 
 ## Requirements
 

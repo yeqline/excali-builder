@@ -13,10 +13,10 @@ excali-builder converts structured data (CSV or Markdown files) into Excalidraw 
 The system distinguishes two fundamentally different types of connections:
 
 1. **Container connections** (`connection_type: "container"`): 
-   - Represent grouping/hierarchy relationships
-   - Children are visually grouped with their parent
-   - No arrows drawn - just visual proximity and Excalidraw groups
-   - Example: A module containing its components
+   - Do not draw visible arrows
+   - Can be used to group related nodes in Excalidraw
+   - Do not control layout
+   - Example: Hide parent-child arrows while keeping a grouped hierarchy
 
 2. **Line connections** (`connection_type: "line"`):
    - Represent relationships between nodes
@@ -88,7 +88,8 @@ excali_builder/
 3. Register in `builder.py`'s `__init__`
 4. Add to `parsers/__init__.py` exports
 
-**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. This keeps source files simple (just edge_type) while config defines behavior.
+**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. The special `parent_child` edge type defines structural hierarchy for layout.
+Markdown also supports a built-in `link` node type with a required `target` meta field. Nested link nodes receive a default `link` edge to their parent unless the author explicitly declares `link:` edges.
 
 #### `config/` - Configuration
 
@@ -98,27 +99,20 @@ excali_builder/
 | `loader.py` | Load JSON config files from folder |
 
 **Config files per project**:
-- `config.json`: Parser type, default layout
+- `config.json`: Parser type, tree layout settings
 - `node_config.json`: Styling per node type
 - `edge_config.json`: Styling and connection_type per edge type
 
-**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. This means you can change how an edge type behaves (grouping vs arrow) by changing config, not source data.
+**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. Layout does not depend on `connection_type`; it follows `parent_child` edges only.
 
 #### `layout/` - Positioning
 
 | File | Purpose |
 |------|---------|
 | `base.py` | Abstract `BaseLayout` interface |
-| `radial.py` | Radial/circular layout algorithm |
 | `tree.py` | Tree layout algorithm |
-| `positioner.py` | Container child positioning |
 
-**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is.
-
-**Positioner** handles container relationships:
-- Reads `placement` (inside/outside), `direction` (top/bottom/left/right/radial)
-- Positions children relative to parent
-- Respects `child_offset` and `group_padding` from config
+**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement always uses the tree layout and follows `parent_child` edges.
 
 #### `excalidraw/` - Excalidraw Integration
 
@@ -134,6 +128,7 @@ excali_builder/
 - Arrow elements for line connections
 - Groups for container relationships
 - `customData.node_id` for position syncing
+- Deterministic shape/text element IDs so internal link nodes can target other nodes reliably
 
 **Design decision**: Only node positions are synced, not edge positions. Edges are regenerated from source and bound to nodes, so they auto-update when nodes move.
 
@@ -205,7 +200,7 @@ Runs sync (if excalidraw exists) then build.
 
 2. **Excalidraw is authoritative for layout**: After user edits positions, those are preserved
 
-3. **Edge types define behavior via config**: Whether an edge creates a group or an arrow is determined by `edge_config.json`, not the source file
+3. **Hierarchy is explicit**: `parent_child` defines structural layout, while `connection_type` only changes rendering
 
 4. **Stable IDs enable syncing**: Every node needs a unique, stable ID that persists across rebuilds
 
@@ -234,4 +229,3 @@ uv run excali-builder examples/my-test
 - Only add comments explaining "why", not "how"
 - Keep functions focused and modular
 - Follow existing patterns when adding new features
-

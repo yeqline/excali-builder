@@ -1,7 +1,9 @@
 """Exporter: Convert Graph to Excalidraw JSON format."""
 
+import hashlib
 import json
-from typing import Dict, Any, List, Optional
+import textwrap
+from typing import Dict, Any, List, Optional, Tuple
 from ..core.graph import Graph
 from ..core.edge import ConnectionType
 from ..config.schema import GlobalConfig, NodeTypeConfig, LineConnectionConfig
@@ -10,6 +12,45 @@ from ..config.loader import ConfigLoader
 
 class ExcalidrawExporter:
     """Exports Graph to Excalidraw JSON format."""
+
+    MAX_INITIAL_NODE_WIDTH = 420
+    MAX_INITIAL_NODE_HEIGHT = 220
+    BOUND_TEXT_VERTICAL_PADDING = 5
+    FONT_FAMILY_MAP = {
+        "virgil": 1,
+        "helvetica": 2,
+        "arial": 2,
+        "sans": 2,
+        "sans-serif": 2,
+        "cascadia": 3,
+        "cascadia code": 3,
+        "monospace": 3,
+        "mono": 3,
+        "excalidraw": 5,
+        "hand-drawn": 5,
+        "handdrawn": 5,
+    }
+
+    def get_node_body_text(self, node) -> str:
+        """Return the body text that should be rendered for a node."""
+        if not node.metadata:
+            return ""
+        return (node.metadata.get("text") or node.metadata.get("content") or "").strip()
+
+    def get_node_full_text(self, node) -> str:
+        """Return the display text used for the node's bound text element."""
+        node_text = self.get_node_body_text(node)
+        if node_text:
+            return f"{node.label}\n{node_text}"
+        return node.label
+
+    def measure_node(self, node, node_config: NodeTypeConfig) -> Tuple[float, float]:
+        """Estimate the node size from the text that will be rendered."""
+        full_text = self.get_node_full_text(node)
+        return (
+            self._calculate_text_width(full_text, node_config),
+            self._calculate_text_height(full_text, node_config),
+        )
 
     def export(
         self, graph: Graph, config: GlobalConfig, output_path: str
@@ -23,19 +64,16 @@ class ExcalidrawExporter:
 
         for node in graph.nodes.values():
             node_config = ConfigLoader.get_node_config(config, node.type)
+            shape_element_id = self._get_shape_element_id(node.id)
+            text_element_id = self._get_text_element_id(node.id)
 
-            # Get node text from metadata if available
-            node_text = node.metadata.get("text", "").strip() if node.metadata else ""
-            
-            # Calculate text content (title + text if available)
-            if node_text:
-                full_text = f"{node.label}\n{node_text}"
-            else:
-                full_text = node.label
+            original_text = self.get_node_full_text(node)
             
             # Calculate default size if not set (accounting for multi-line text)
-            width = node.width or self._calculate_text_width(full_text, node_config)
-            height = node.height or self._calculate_text_height(full_text, node_config)
+            measured_width, measured_height = self.measure_node(node, node_config)
+            width = node.width or measured_width
+            height = node.height or measured_height
+            display_text = self._wrap_text_to_width(original_text, node_config, width)
 
             x = node.x or 0
             y = node.y or 0
@@ -43,15 +81,15 @@ class ExcalidrawExporter:
             # Create element based on shape
             if node_config.shape == "ellipse":
                 element = self._create_ellipse(
-                    x, y, width, height, node, node_config
+                    x, y, width, height, node, node_config, shape_element_id
                 )
             elif node_config.shape == "diamond":
                 element = self._create_diamond(
-                    x, y, width, height, node, node_config
+                    x, y, width, height, node, node_config, shape_element_id
                 )
             else:  # rectangle
                 element = self._create_rectangle(
-                    x, y, width, height, node, node_config
+                    x, y, width, height, node, node_config, shape_element_id
                 )
 
             # Store stable node_id in customData for sync
@@ -72,10 +110,12 @@ class ExcalidrawExporter:
             saved_text_width = node.metadata.get("text_width") if node.metadata else None
             saved_text_height = node.metadata.get("text_height") if node.metadata else None
             text_element = self._create_text(
-                x, y, width, height, full_text, node_config, element_id,
+                x, y, width, height, display_text, node_config, element_id,
                 text_align=saved_text_align, vertical_align=saved_vertical_align,
                 text_x=saved_text_x, text_y=saved_text_y,
-                text_width=saved_text_width, text_height=saved_text_height
+                text_width=saved_text_width, text_height=saved_text_height,
+                original_text=original_text,
+                element_id=text_element_id,
             )
             text_element["customData"] = {"node_id": node.id}  # Also store node_id in text for sync
             text_element_id = text_element["id"]
@@ -86,6 +126,15 @@ class ExcalidrawExporter:
             if "boundElements" not in element:
                 element["boundElements"] = []
             element["boundElements"].append({"type": "text", "id": text_element_id})
+
+        for node in graph.nodes.values():
+            element_id = node_element_map.get(node.id)
+            if not element_id:
+                continue
+
+            link_value = self._resolve_node_link(node, node_element_map)
+            if link_value:
+                elements[element_index_map[element_id]]["link"] = link_value
 
         # Export line-based edges as arrows
         for edge in graph.edges:
@@ -182,7 +231,14 @@ class ExcalidrawExporter:
             json.dump(excalidraw_data, f, indent=2)
 
     def _create_rectangle(
-        self, x: float, y: float, width: float, height: float, node, node_config: NodeTypeConfig
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        node,
+        node_config: NodeTypeConfig,
+        element_id: str,
     ) -> Dict[str, Any]:
         """Create a rectangle element."""
         return {
@@ -190,7 +246,7 @@ class ExcalidrawExporter:
             "version": 1,
             "versionNonce": self._generate_nonce(),
             "isDeleted": False,
-            "id": self._generate_element_id(),
+            "id": element_id,
             "fillStyle": "solid",
             "strokeWidth": 2,
             "strokeStyle": "solid",
@@ -214,7 +270,14 @@ class ExcalidrawExporter:
         }
 
     def _create_ellipse(
-        self, x: float, y: float, width: float, height: float, node, node_config: NodeTypeConfig
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        node,
+        node_config: NodeTypeConfig,
+        element_id: str,
     ) -> Dict[str, Any]:
         """Create an ellipse element."""
         return {
@@ -222,7 +285,7 @@ class ExcalidrawExporter:
             "version": 1,
             "versionNonce": self._generate_nonce(),
             "isDeleted": False,
-            "id": self._generate_element_id(),
+            "id": element_id,
             "fillStyle": "solid",
             "strokeWidth": 2,
             "strokeStyle": "solid",
@@ -246,7 +309,14 @@ class ExcalidrawExporter:
         }
 
     def _create_diamond(
-        self, x: float, y: float, width: float, height: float, node, node_config: NodeTypeConfig
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        node,
+        node_config: NodeTypeConfig,
+        element_id: str,
     ) -> Dict[str, Any]:
         """Create a diamond element using a polygon."""
         center_x = x + width / 2
@@ -263,7 +333,7 @@ class ExcalidrawExporter:
             "version": 1,
             "versionNonce": self._generate_nonce(),
             "isDeleted": False,
-            "id": self._generate_element_id(),
+            "id": element_id,
             "fillStyle": "solid",
             "strokeWidth": 2,
             "strokeStyle": "solid",
@@ -302,6 +372,8 @@ class ExcalidrawExporter:
         text_y: Optional[float] = None,
         text_width: Optional[float] = None,
         text_height: Optional[float] = None,
+        original_text: Optional[str] = None,
+        element_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a text element bound to a container.
         
@@ -312,28 +384,41 @@ class ExcalidrawExporter:
         lines = text.split("\n")
         line_count = len(lines)
         line_height = node_config.font_size * 1.25
-        text_height = line_height * line_count
+        measured_text_height = line_height * line_count
         
-        # Estimate text width (Excalidraw will adjust this)
         max_line_width = max(len(line) for line in lines) if lines else len(text)
-        text_width = max(self._calculate_text_width(text, node_config), max_line_width * node_config.font_size * 0.6)
-        
-        # When containerId is set, Excalidraw recalculates text position/size based on alignment.
-        # We should NOT use saved text geometry because it will conflict with Excalidraw's calculation.
-        # Instead, use container bounds - Excalidraw will recalculate based on textAlign/verticalAlign.
-        # Only use saved geometry if containerId is NOT set (free text elements).
-        # For now, always use container bounds when containerId is present (which is always in our case).
-        text_x_pos = x
-        text_y_pos = y
-        text_w = width
-        text_h = height
+        available_text_width = max(
+            min(width, self.MAX_INITIAL_NODE_WIDTH) - node_config.padding * 2,
+            1,
+        )
+        measured_text_width = max(
+            max_line_width * node_config.font_size * 0.6,
+            available_text_width,
+        )
+        text_w = text_width if text_width is not None else measured_text_width
+        text_h = text_height if text_height is not None else measured_text_height
+        alignment = text_align or "center"
+        vertical_alignment = vertical_align or "top"
+        text_x_pos = text_x if text_x is not None else self._get_default_text_x(
+            x,
+            width,
+            text_w,
+            node_config.padding,
+            alignment,
+        )
+        text_y_pos = text_y if text_y is not None else self._get_default_text_y(
+            y,
+            height,
+            text_h,
+            vertical_alignment,
+        )
         
         return {
             "type": "text",
             "version": 1,
             "versionNonce": self._generate_nonce(),
             "isDeleted": False,
-            "id": self._generate_element_id(),
+            "id": element_id or self._generate_element_id(),
             "fillStyle": "solid",
             "strokeWidth": 1,
             "strokeStyle": "solid",
@@ -356,12 +441,12 @@ class ExcalidrawExporter:
             "locked": False,
             "text": text,
             "fontSize": node_config.font_size,
-            "fontFamily": node_config.font_family,
-            "textAlign": text_align or "center",  # Use saved alignment or default to center
-            "verticalAlign": vertical_align or "top",  # Use saved alignment or default to top
+            "fontFamily": self._get_excalidraw_font_family(node_config.font_family),
+            "textAlign": alignment,  # Use saved alignment or default to center
+            "verticalAlign": vertical_alignment,  # Use saved alignment or default to top
             "baseline": line_height,
             "containerId": container_id,  # This tells Excalidraw to position relative to container
-            "originalText": text,
+            "originalText": original_text or text,
             "lineHeight": 1.25,
             "autoResize": True,  # Enable auto-resize for text elements
         }
@@ -521,17 +606,131 @@ class ExcalidrawExporter:
 
     def _calculate_text_width(self, text: str, node_config: NodeTypeConfig) -> float:
         """Estimate text width (rough approximation)."""
-        # Rough estimate: ~8 pixels per character for Arial 14pt
+        lines = self._wrap_text_to_max_width(text, node_config)
+        longest_line = max((len(line) for line in lines), default=0)
         char_width = node_config.font_size * 0.6
-        return max(100, len(text) * char_width + node_config.padding * 2)
+        return min(
+            self.MAX_INITIAL_NODE_WIDTH,
+            max(100, longest_line * char_width + node_config.padding * 2),
+        )
 
     def _calculate_text_height(self, text: str, node_config: NodeTypeConfig) -> float:
         """Estimate text height for single or multi-line text."""
-        # Count lines
-        line_count = len(text.split("\n"))
+        line_count = len(self._wrap_text_to_max_width(text, node_config))
         line_height = node_config.font_size * 1.25
-        # Rough estimate: line_height * line_count + padding
-        return max(30, line_height * line_count + node_config.padding * 2)
+        return min(
+            self.MAX_INITIAL_NODE_HEIGHT,
+            max(30, line_height * line_count + node_config.padding * 2),
+        )
+
+    def _wrap_text_to_max_width(self, text: str, node_config: NodeTypeConfig) -> List[str]:
+        """Approximate wrapped lines using the initial max node width."""
+        return self._wrap_text_to_width(
+            text,
+            node_config,
+            self.MAX_INITIAL_NODE_WIDTH,
+        ).split("\n")
+
+    def _wrap_text_to_width(
+        self,
+        text: str,
+        node_config: NodeTypeConfig,
+        max_width: float,
+    ) -> str:
+        """Approximate wrapped text for a target container width."""
+        char_width = max(node_config.font_size * 0.6, 1)
+        available_width = max(max_width - node_config.padding * 2, char_width)
+        max_chars_per_line = max(1, int(available_width // char_width))
+
+        wrapped_lines: List[str] = []
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                wrapped_lines.append("")
+                continue
+            wrapped_lines.extend(
+                textwrap.wrap(
+                    stripped,
+                    width=max_chars_per_line,
+                    break_long_words=True,
+                    break_on_hyphens=False,
+                )
+                or [stripped]
+            )
+
+        return "\n".join(wrapped_lines or [""])
+
+    def _get_default_text_x(
+        self,
+        x: float,
+        width: float,
+        text_width: float,
+        padding: float,
+        alignment: str,
+    ) -> float:
+        """Return the default bound-text x position for a fresh export."""
+        if alignment == "left":
+            return x + padding
+        if alignment == "right":
+            return x + max(width - padding - text_width, 0)
+        return x + max((width - text_width) / 2, 0)
+
+    def _get_default_text_y(
+        self,
+        y: float,
+        height: float,
+        text_height: float,
+        vertical_alignment: str,
+    ) -> float:
+        """Return the default bound-text y position for a fresh export."""
+        available_space = max(height - text_height, 0)
+        if vertical_alignment == "bottom":
+            return y + max(available_space - self.BOUND_TEXT_VERTICAL_PADDING, 0)
+        if vertical_alignment == "middle":
+            return y + available_space / 2
+        return y + min(self.BOUND_TEXT_VERTICAL_PADDING, available_space)
+
+    def _resolve_node_link(
+        self,
+        node,
+        node_element_map: Dict[str, str],
+    ) -> Optional[str]:
+        """Resolve a built-in link node target to an Excalidraw link string."""
+        if node.type != "link" or not node.metadata:
+            return None
+
+        target = (node.metadata.get("target") or "").strip()
+        if not target:
+            return None
+
+        if target.startswith("#"):
+            target_node_id = target[1:]
+            target_element_id = node_element_map.get(target_node_id)
+            if not target_element_id:
+                return None
+            return f"https://excalidraw.com/?element={target_element_id}"
+
+        return target
+
+    def _get_excalidraw_font_family(self, font_family: Any) -> int:
+        """Map a user-friendly font name to Excalidraw's numeric font family."""
+        if isinstance(font_family, int):
+            return font_family
+
+        normalized = str(font_family or "").strip().lower()
+        return self.FONT_FAMILY_MAP.get(normalized, 2)
+
+    def _get_shape_element_id(self, node_id: str) -> str:
+        """Return a deterministic shape element ID for a node."""
+        return f"node-{self._stable_id_suffix(node_id)}"
+
+    def _get_text_element_id(self, node_id: str) -> str:
+        """Return a deterministic text element ID for a node."""
+        return f"text-{self._stable_id_suffix(node_id)}"
+
+    def _stable_id_suffix(self, value: str) -> str:
+        """Create a short deterministic suffix for Excalidraw element IDs."""
+        return hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
 
     def _generate_nonce(self) -> int:
         """Generate a random nonce."""
@@ -548,4 +747,3 @@ class ExcalidrawExporter:
         """Generate a random seed."""
         import random
         return random.randint(1, 1000000)
-

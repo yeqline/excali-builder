@@ -1,96 +1,177 @@
-"""Tree layout algorithm for hierarchical graphs."""
+"""Tree layout algorithm driven by parent_child hierarchy."""
 
-from typing import Dict
+from typing import Dict, List
+
 from ..core.graph import Graph
 from ..core.node import Node
 from .base import BaseLayout
 
 
 class TreeLayout(BaseLayout):
-    """Tree layout: traditional hierarchical tree structure."""
+    """Tree layout: a simple hierarchy arranged in one consistent direction."""
 
     def apply_layout(self, graph: Graph, config: Dict) -> None:
         """Apply tree layout to graph nodes."""
-        direction = config.get("direction", "top-down")  # top-down, left-right, right-left, bottom-up
-        node_spacing_x = config.get("node_spacing_x", 200)
-        node_spacing_y = config.get("node_spacing_y", 150)
+        direction = config.get("direction", "left-right")
+        level_spacing = config.get("level_spacing", 180)
+        sibling_spacing = config.get("sibling_spacing", 40)
+        root_spacing = config.get("root_spacing", 100)
+        start_x = config.get("start_x", 120)
+        start_y = config.get("start_y", 120)
 
-        # Find root nodes
         root_nodes = [
             node
             for node in graph.nodes.values()
-            if not graph.get_container_parents(node.id)
+            if not graph.get_hierarchy_parents(node.id)
+        ]
+        if not root_nodes and graph.nodes:
+            root_nodes = [list(graph.nodes.values())[0]]
+
+        spans = {
+            root.id: self._estimate_subtree_span(graph, root, direction, sibling_spacing)
+            for root in root_nodes
+        }
+
+        positioned_roots = [
+            root for root in root_nodes if root.x is not None and root.y is not None
+        ]
+        unpositioned_roots = [
+            root for root in root_nodes if root.x is None or root.y is None
         ]
 
-        if not root_nodes:
-            root_nodes = [list(graph.nodes.values())[0]] if graph.nodes else []
+        next_offset = self._next_root_offset(
+            positioned_roots,
+            spans,
+            direction,
+            start_x,
+            start_y,
+            root_spacing,
+        )
 
-        start_x = config.get("start_x", 400)
-        start_y = config.get("start_y", 100)
+        for root in positioned_roots:
+            self._layout_subtree(graph, root, direction, level_spacing, sibling_spacing)
 
-        for root in root_nodes:
-            if root.x is None or root.y is None:
+        for root in unpositioned_roots:
+            span = spans[root.id]
+            node_width = root.width or 100
+            node_height = root.height or 50
+
+            if direction in {"left-right", "right-left"}:
                 root.x = start_x
+                root.y = next_offset + (span - node_height) / 2
+            else:
+                root.x = next_offset + (span - node_width) / 2
                 root.y = start_y
-            self._layout_subtree_tree(
-                graph, root, direction, node_spacing_x, node_spacing_y, 0
-            )
 
-    def _layout_subtree_tree(
+            next_offset += span + root_spacing
+            self._layout_subtree(graph, root, direction, level_spacing, sibling_spacing)
+
+    def _layout_subtree(
         self,
         graph: Graph,
         parent: Node,
         direction: str,
-        spacing_x: float,
-        spacing_y: float,
-        level: int,
-    ):
-        """Recursively layout children in tree structure."""
-        children = graph.get_container_children(parent.id)
+        level_spacing: float,
+        sibling_spacing: float,
+    ) -> None:
+        """Recursively position descendants around an already-positioned parent."""
+        children = graph.get_hierarchy_children(parent.id)
         if not children:
             return
 
-        parent_x = parent.x or 0
-        parent_y = parent.y or 0
+        child_spans = [
+            self._estimate_subtree_span(graph, child, direction, sibling_spacing)
+            for child in children
+        ]
+        total_span = sum(child_spans) + sibling_spacing * (len(children) - 1)
 
-        # Calculate positions based on direction
-        if direction == "top-down":
-            child_y = parent_y + spacing_y
-            # Arrange children horizontally
-            total_width = (len(children) - 1) * spacing_x
-            start_x = parent_x - total_width / 2
-            for i, child in enumerate(children):
-                if child.x is None or child.y is None:
-                    child.x = start_x + i * spacing_x
-                    child.y = child_y
-        elif direction == "left-right":
-            child_x = parent_x + spacing_x
-            total_height = (len(children) - 1) * spacing_y
-            start_y = parent_y - total_height / 2
-            for i, child in enumerate(children):
-                if child.x is None or child.y is None:
-                    child.x = child_x
-                    child.y = start_y + i * spacing_y
-        elif direction == "right-left":
-            child_x = parent_x - spacing_x
-            total_height = (len(children) - 1) * spacing_y
-            start_y = parent_y - total_height / 2
-            for i, child in enumerate(children):
-                if child.x is None or child.y is None:
-                    child.x = child_x
-                    child.y = start_y + i * spacing_y
-        else:  # bottom-up
-            child_y = parent_y - spacing_y
-            total_width = (len(children) - 1) * spacing_x
-            start_x = parent_x - total_width / 2
-            for i, child in enumerate(children):
-                if child.x is None or child.y is None:
-                    child.x = start_x + i * spacing_x
-                    child.y = child_y
+        parent_x = parent.x if parent.x is not None else 0
+        parent_y = parent.y if parent.y is not None else 0
+        parent_width = parent.width or 100
+        parent_height = parent.height or 50
+        parent_center_x = parent_x + parent_width / 2
+        parent_center_y = parent_y + parent_height / 2
+        current_offset = (
+            parent_center_y - total_span / 2
+            if direction in {"left-right", "right-left"}
+            else parent_center_x - total_span / 2
+        )
 
-        # Recursively layout children
-        for child in children:
-            self._layout_subtree_tree(
-                graph, child, direction, spacing_x, spacing_y, level + 1
+        for child, span in zip(children, child_spans):
+            child_width = child.width or 100
+            child_height = child.height or 50
+
+            if child.x is None or child.y is None:
+                if direction == "left-right":
+                    child.x = parent_x + parent_width + level_spacing
+                    child.y = current_offset + (span - child_height) / 2
+                elif direction == "right-left":
+                    child.x = parent_x - level_spacing - child_width
+                    child.y = current_offset + (span - child_height) / 2
+                elif direction == "bottom-up":
+                    child.x = current_offset + (span - child_width) / 2
+                    child.y = parent_y - level_spacing - child_height
+                else:  # top-down
+                    child.x = current_offset + (span - child_width) / 2
+                    child.y = parent_y + parent_height + level_spacing
+
+            current_offset += span + sibling_spacing
+            self._layout_subtree(
+                graph,
+                child,
+                direction,
+                level_spacing,
+                sibling_spacing,
             )
 
+    def _estimate_subtree_span(
+        self,
+        graph: Graph,
+        node: Node,
+        direction: str,
+        sibling_spacing: float,
+    ) -> float:
+        """Estimate the span this subtree occupies on the sibling axis."""
+        node_span = (
+            node.height or 50
+            if direction in {"left-right", "right-left"}
+            else node.width or 100
+        )
+        children = graph.get_hierarchy_children(node.id)
+        if not children:
+            return node_span
+
+        child_spans = [
+            self._estimate_subtree_span(graph, child, direction, sibling_spacing)
+            for child in children
+        ]
+        return max(
+            node_span,
+            sum(child_spans) + sibling_spacing * (len(child_spans) - 1),
+        )
+
+    def _next_root_offset(
+        self,
+        positioned_roots: List[Node],
+        spans: Dict[str, float],
+        direction: str,
+        start_x: float,
+        start_y: float,
+        root_spacing: float,
+    ) -> float:
+        """Find the next available root offset after any already-positioned roots."""
+        if not positioned_roots:
+            return start_y if direction in {"left-right", "right-left"} else start_x
+
+        furthest_edge = (
+            start_y if direction in {"left-right", "right-left"} else start_x
+        )
+        for root in positioned_roots:
+            span = spans[root.id]
+            if direction in {"left-right", "right-left"}:
+                center = (root.y if root.y is not None else 0) + (root.height or 50) / 2
+            else:
+                center = (root.x if root.x is not None else 0) + (root.width or 100) / 2
+            furthest_edge = max(furthest_edge, center + span / 2)
+
+        return furthest_edge + root_spacing

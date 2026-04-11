@@ -2,19 +2,18 @@
 
 from .schema import (
     NodeTypeConfig,
-    ContainerConnectionConfig,
     LineConnectionConfig,
     EdgeTypeConfig,
     GlobalConfig,
+    LayoutConfig,
 )
 from .loader import ConfigLoader
 
 __all__ = [
     "NodeTypeConfig",
-    "ContainerConnectionConfig",
     "LineConnectionConfig",
     "EdgeTypeConfig",
     "GlobalConfig",
+    "LayoutConfig",
     "ConfigLoader",
 ]
-

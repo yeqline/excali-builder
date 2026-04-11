@@ -2,20 +2,17 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
-from .core.graph import Graph
-from .core.node import Node
-from .core.edge import ConnectionType
-from .parsers.registry import ParserRegistry
-from .parsers.csv import CSVParser
-from .parsers.markdown import MarkdownParser
-from .layout.radial import RadialLayout
-from .layout.tree import TreeLayout
-from .layout.positioner import Positioner
+from typing import Any, Dict, Optional
+
 from .config.loader import ConfigLoader
 from .config.schema import GlobalConfig
+from .core.graph import Graph
 from .excalidraw.exporter import ExcalidrawExporter
 from .excalidraw.sync import ExcalidrawSync
+from .layout.tree import TreeLayout
+from .parsers.csv import CSVParser
+from .parsers.markdown import MarkdownParser
+from .parsers.registry import ParserRegistry
 
 
 class ExcaliBuilder:
@@ -32,8 +29,14 @@ class ExcaliBuilder:
         self.parser_registry.register("md", MarkdownParser)
         self.parser_registry.register("markdown", MarkdownParser)
 
-    def build_from_folder(self, folder_path: str) -> str:
-        """Build Excalidraw diagram from source files in folder."""
+    def build_from_folder(self, folder_path: str, full_refresh: bool = False) -> str:
+        """Build Excalidraw diagram from source files in folder.
+
+        Args:
+            folder_path: Source folder containing config and content files.
+            full_refresh: When True, ignore saved x/y positions and rebuild layout
+                from scratch while still reusing saved sizes and text alignment.
+        """
         folder = Path(folder_path)
 
         # 1. Detect input format from config.json
@@ -56,36 +59,10 @@ class ExcaliBuilder:
         config = ConfigLoader.load_from_folder(folder)
 
         # 4. Load positions.json from folder if exists
-        positions_path = folder / "positions.json"
-        if positions_path.exists():
-            with open(positions_path, "r", encoding="utf-8") as f:
-                positions_data = json.load(f)
-                # Apply geometry and text alignment to matching nodes
-                for node_id, geometry in positions_data.items():
-                    if node_id in graph.nodes:
-                        node = graph.nodes[node_id]
-                        node.x = geometry.get("x")
-                        node.y = geometry.get("y")
-                        node.width = geometry.get("width")
-                        node.height = geometry.get("height")
-                        # Store text alignment and geometry in metadata (always update from positions.json)
-                        if node.metadata is None:
-                            node.metadata = {}
-                        if "textAlign" in geometry:
-                            node.metadata["text_align"] = geometry["textAlign"]
-                        if "verticalAlign" in geometry:
-                            node.metadata["vertical_align"] = geometry["verticalAlign"]
-                        # Store text element geometry (Excalidraw-calculated values)
-                        if "text_x" in geometry:
-                            node.metadata["text_x"] = geometry["text_x"]
-                        if "text_y" in geometry:
-                            node.metadata["text_y"] = geometry["text_y"]
-                        if "text_width" in geometry:
-                            node.metadata["text_width"] = geometry["text_width"]
-                        if "text_height" in geometry:
-                            node.metadata["text_height"] = geometry["text_height"]
+        positions_data = self._load_positions_data(folder)
+        self._apply_saved_geometry(graph, positions_data, full_refresh=full_refresh)
 
-        # 5. For new nodes (without positions), apply deterministic layout
+        # 5. For new nodes (without positions), apply deterministic tree layout
         self._apply_layout_to_new_nodes(graph, config)
 
         # 6. Export to Excalidraw JSON
@@ -99,118 +76,78 @@ class ExcaliBuilder:
         folder = Path(folder_path)
         self.sync.sync_from_folder(folder)
 
+    def _load_positions_data(self, folder: Path) -> Dict[str, Dict[str, Any]]:
+        """Load saved node geometry from positions.json if it exists."""
+        positions_path = folder / "positions.json"
+        if not positions_path.exists():
+            return {}
+
+        with open(positions_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _apply_saved_geometry(
+        self,
+        graph: Graph,
+        positions_data: Dict[str, Dict[str, Any]],
+        full_refresh: bool = False,
+    ) -> None:
+        """Apply saved geometry to matching nodes.
+
+        In full refresh mode, widths and heights are reused but x/y positions are
+        intentionally ignored so layout starts from scratch.
+        """
+        for node_id, geometry in positions_data.items():
+            if node_id not in graph.nodes:
+                continue
+
+            node = graph.nodes[node_id]
+            if not full_refresh:
+                node.x = geometry.get("x")
+                node.y = geometry.get("y")
+            node.width = geometry.get("width")
+            node.height = geometry.get("height")
+
+            if node.metadata is None:
+                node.metadata = {}
+            if "textAlign" in geometry:
+                node.metadata["text_align"] = geometry["textAlign"]
+            if "verticalAlign" in geometry:
+                node.metadata["vertical_align"] = geometry["verticalAlign"]
+            if not full_refresh:
+                if "text_x" in geometry:
+                    node.metadata["text_x"] = geometry["text_x"]
+                if "text_y" in geometry:
+                    node.metadata["text_y"] = geometry["text_y"]
+                if "text_width" in geometry:
+                    node.metadata["text_width"] = geometry["text_width"]
+                if "text_height" in geometry:
+                    node.metadata["text_height"] = geometry["text_height"]
+
     def _apply_layout_to_new_nodes(self, graph: Graph, config: GlobalConfig) -> None:
-        """Apply layout algorithm to nodes that don't have positions yet."""
-        # First, ensure all nodes have default dimensions if missing
-        # This is needed for proper positioning calculations
+        """Apply tree layout to nodes that do not already have positions."""
         for node in graph.nodes.values():
-            if node.width is None:
-                node.width = 100
-            if node.height is None:
-                node.height = 50
+            if node.width is None or node.height is None:
+                node_config = ConfigLoader.get_node_config(config, node.type)
+                measured_width, measured_height = self.exporter.measure_node(
+                    node,
+                    node_config,
+                )
+                if node.width is None:
+                    node.width = measured_width
+                if node.height is None:
+                    node.height = measured_height
 
-        # Separate nodes with and without positions
-        nodes_with_positions = [
-            node for node in graph.nodes.values() if node.x is not None and node.y is not None
-        ]
-        nodes_without_positions = [
-            node for node in graph.nodes.values() if node.x is None or node.y is None
-        ]
-
-        if not nodes_without_positions:
+        if all(node.x is not None and node.y is not None for node in graph.nodes.values()):
             return
 
-        # Use positioner for container-based connections
-        # Extract container connections from unified edge_types config
-        container_connections = {}
-        for edge_type, edge_config in config.edge_types.items():
-            if edge_config.connection_type == "container":
-                container_connections[edge_type] = ConfigLoader.get_container_config(
-                    config, edge_type
-                )
-        positioner = Positioner(container_connections)
-
-        # First, handle container-based positioning
-        # Process parents that already have positions
-        for node in nodes_with_positions:
-            # Find container edges from this node
-            container_edges = [
-                edge
-                for edge in graph.edges
-                if edge.connection_type == ConnectionType.CONTAINER
-                and edge.source_id == node.id
-            ]
-
-            for edge in container_edges:
-                parent = graph.nodes.get(edge.source_id)
-                if parent and (parent.x is not None and parent.y is not None):
-                    parent_node_config = ConfigLoader.get_node_config(config, parent.type)
-                    positioner.position_container_children(graph, parent, edge.edge_type, parent_node_config)
-        
-        # Also process any container parents that might have been positioned by layout
-        # This handles cases where parent was unpositioned but got positioned by general layout
-        all_positioned_nodes = [
-            node for node in graph.nodes.values() if node.x is not None and node.y is not None
-        ]
-        for node in all_positioned_nodes:
-            # Find container edges from this node
-            container_edges = [
-                edge
-                for edge in graph.edges
-                if edge.connection_type == ConnectionType.CONTAINER
-                and edge.source_id == node.id
-            ]
-            for edge in container_edges:
-                parent = graph.nodes.get(edge.source_id)
-                if parent:
-                    parent_node_config = ConfigLoader.get_node_config(config, parent.type)
-                    positioner.position_container_children(graph, parent, edge.edge_type, parent_node_config)
-
-        # Then apply general layout for remaining unpositioned nodes
-        remaining_unpositioned = [
-            node for node in graph.nodes.values() if node.x is None or node.y is None
-        ]
-
-        if remaining_unpositioned:
-            layout_type = config.default_layout
-            layout_config: Dict[str, Any] = {}
-
-            if layout_type == "tree":
-                layout = TreeLayout()
-                layout_config = {"direction": "top-down", "node_spacing_x": 200, "node_spacing_y": 150}
-            else:  # radial (default)
-                layout = RadialLayout()
-                layout_config = {"radius_step": 150, "angle_step": 60}
-
-            # Create a temporary graph with only unpositioned nodes for layout
-            temp_graph = Graph()
-            for node in remaining_unpositioned:
-                temp_graph.add_node(node)
-                # Add edges that connect unpositioned nodes
-                for edge in graph.edges:
-                    if (
-                        edge.source_id in [n.id for n in remaining_unpositioned]
-                        and edge.target_id in [n.id for n in remaining_unpositioned]
-                    ):
-                        temp_graph.add_edge(edge)
-
-            layout.apply_layout(temp_graph, layout_config)
-
-            # After layout, try container positioning again for newly positioned nodes
-            newly_positioned = [
-                node for node in graph.nodes.values()
-                if node.x is not None and node.y is not None
-                and node.id in [n.id for n in remaining_unpositioned]
-            ]
-
-            for node in newly_positioned:
-                container_edges = [
-                    edge
-                    for edge in graph.edges
-                    if edge.connection_type == ConnectionType.CONTAINER
-                    and edge.source_id == node.id
-                ]
-                for edge in container_edges:
-                    parent_node_config = ConfigLoader.get_node_config(config, node.type)
-                    positioner.position_container_children(graph, node, edge.edge_type, parent_node_config)
-
+        TreeLayout().apply_layout(
+            graph,
+            {
+                "direction": config.layout.direction,
+                "level_spacing": config.layout.level_spacing,
+                "sibling_spacing": config.layout.sibling_spacing,
+                "root_spacing": config.layout.root_spacing,
+                "start_x": config.layout.start_x,
+                "start_y": config.layout.start_y,
+            },
+        )

@@ -28,6 +28,22 @@ your-diagram/
 └── output.excalidraw     # Generated Excalidraw file
 ```
 
+## Mental Model
+
+- A **node** is a box in the diagram. In Markdown, a node comes from a heading with an anchor such as `## Topic {#topic}`. The heading text becomes the node title, and the body under that heading becomes the node text.
+- An **edge** is a relationship between two nodes. In Markdown, some edges are created by you in `edges` blocks such as `prereqs` or `related`, and one edge type (`parent_child`) is created automatically by the builder from heading nesting.
+- **Node types are user-defined labels** such as `category`, `concept`, `detail`, or `principle`. You assign them in the `[!meta]` block with `> type: ...`, and `node_config.json` looks up how that type should look. These names are not built into the builder. If you omit `type`, Markdown defaults to `concept`.
+- **Edge types are also user-defined names** such as `prereqs`, `related`, and `contrasts`. You define their meaning in `edge_config.json`. The builder only reserves one special edge type in Markdown: `parent_child`, which it creates automatically from heading hierarchy.
+- **Markdown also has one built-in special node type: `link`.** A link node represents a single navigation target. Its target is stored in `> target: ...`, and it can point either to an external URL or to another node with `#node-id`. this node has a default `link` edge associated with it. Right now both (link node and link edge) have built-in defaults so the minimum Markdown works without adding them to edge and node config. You only need to add them if you want to override the defaults styling.
+- **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
+- **Layout is built into the builder design.** Fresh builds always use the same tree layout. The hierarchy for that tree comes from `parent_child` edges, not from `connection_type`.
+- **`parent_child` is the one structural edge type in Markdown.** It is auto-generated from heading nesting and always defines the tree layout, whether you render it as a line or as a container group.
+- **`edge_config.json` is mostly rendering.** It answers: should this edge draw an arrow, or should it behave like a visual group? For line-like edges, it also controls color, thickness, stroke style, and arrowheads.
+- **`connection_type` is part of the builder design, not a user-invented concept.** Every edge type resolves to one of two built-in rendering modes:
+  - `line`: draw a visible line or arrow between nodes
+  - `container`: do not draw an arrow; group related nodes in Excalidraw
+- **`container` is not a node type and it no longer drives layout.** It is just a rendering choice. If you switch `parent_child` between `line` and `container`, the tree layout stays the same; only the visible arrow/group behavior changes.
+
 ## Markdown Format
 
 ### Nodes (Headings with Anchors)
@@ -78,6 +94,9 @@ Right under the heading, add a blockquote with `[!meta]` to define node type and
 - `type`: Node type for styling lookup in `node_config.json`
   - Common types: `concept`, `example`, `code`, `table`
   - Defaults to `concept` if not specified
+- `target`: Used by built-in `link` nodes only
+  - `https://...` opens an external URL
+  - `#node-id` jumps to another node in the same Excalidraw canvas
 - `tags`: Comma-separated list of tags (stored in metadata, can be used for filtering)
 
 **Example:**
@@ -150,6 +169,37 @@ This creates:
 - `parent` → `child-b` (parent_child edge)
 - `child-b` → `grandchild` (parent_child edge)
 
+### Built-in Link Nodes
+
+Use `type: link` when you want a node to be clickable rather than explanatory.
+
+```markdown
+### Snowflake Docs {#snowflake-docs}
+
+> [!meta]
+> type: link
+> target: https://docs.snowflake.com/
+```
+
+Or for an internal jump:
+
+```markdown
+### Jump To Workflow {#jump-to-workflow}
+
+> [!meta]
+> type: link
+> target: #practical-workflow
+```
+
+Rules:
+
+- A `link` node must have exactly one `target`.
+- `target` is inferred automatically:
+  - starts with `#` → internal node jump
+  - anything else → external URL/string link
+- If a nested `link` node does not declare an explicit `link:` edge, the builder automatically creates a built-in `link` edge from its parent to the link node.
+- If you do declare explicit `link:` edges in an `edges` block, those explicit edges are used instead of the default parent link edge.
+
 ### YAML Front Matter (Optional)
 
 YAML front matter at the beginning of files is ignored by the parser:
@@ -172,16 +222,25 @@ General configuration for the diagram project.
 ```json
 {
   "parser_type": "md",
-  "default_layout": "radial"
+  "layout": {
+    "direction": "left-right",
+    "level_spacing": 180,
+    "sibling_spacing": 40,
+    "root_spacing": 100,
+    "start_x": 120,
+    "start_y": 120
+  }
 }
 ```
 
 **Options:**
 
 - `parser_type`: Must be `"md"` or `"markdown"` for Markdown parser
-- `default_layout`: Default layout algorithm for nodes without positions
-  - `"radial"`: Circular hierarchical layout (default)
-  - `"tree"`: Traditional tree layout
+- `layout.direction`: Tree direction. One of `"left-right"`, `"right-left"`, `"top-down"`, `"bottom-up"`
+- `layout.level_spacing`: Gap between parent and child levels
+- `layout.sibling_spacing`: Gap between sibling subtrees
+- `layout.root_spacing`: Gap between separate top-level trees
+- `layout.start_x`, `layout.start_y`: Starting position for the initial layout
 
 ### node_config.json
 
@@ -232,11 +291,8 @@ Defines styling and behavior for different edge types.
 ```json
 {
   "parent_child": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+    "connection_type": "line",
+    "arrow_end": "arrow"
   },
   "prereqs": {
     "connection_type": "line",
@@ -268,19 +324,19 @@ Defines styling and behavior for different edge types.
 **Edge Types from Markdown:**
 
 - `parent_child`: Auto-generated from heading hierarchy
+- `link`: Built-in edge type used by `link` nodes
 - `prereqs`: From edges block (directed dependency)
 - `related`: From edges block or inline links (association)
 - `contrasts`: From edges block (opposition)
 
-**Container Connection Options:**
+**Important:**
 
-- `connection_type`: Must be `"container"` for grouping
-- `placement`: `"inside"` or `"outside"` - child positioning
-- `direction`: `"top"`, `"bottom"`, `"left"`, `"right"`, `"radial"`
-- `child_offset`: Spacing between parent and children
-- `group_padding`: Padding around grouped children
+- `parent_child` always defines the tree layout in Markdown.
+- Set `parent_child.connection_type` to `"line"` if you want visible hierarchy arrows.
+- Set `parent_child.connection_type` to `"container"` if you want the same layout without arrows, plus Excalidraw grouping.
+- `link` nodes are Markdown-only and use the built-in `link` edge style by default.
 
-**Line Connection Options:**
+**Line Styling Options:**
 
 - `connection_type`: Must be `"line"` for arrows
 - `color`: Line color (hex)
@@ -308,12 +364,18 @@ Run the build command:
 uv run excali-builder your-diagram-folder
 ```
 
+To discard the current saved layout and generate a fresh first-pass layout while preserving saved node sizes:
+
+```bash
+uv run excali-builder --full-refresh your-diagram-folder
+```
+
 This will:
 
 1. Sync positions from any existing `output.excalidraw` file (if present)
 2. Parse all `.md` files in the folder
 3. Apply saved positions from `positions.json` (if present)
-4. Layout new nodes using the configured layout algorithm
+4. Layout new nodes using the configured tree settings
 5. Generate `output.excalidraw`
 
 ### 3. Edit in Excalidraw
@@ -405,16 +467,12 @@ Details about subtopic B.
 ```json
 {
   "parent_child": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+    "connection_type": "container"
   }
 }
 ```
 
-This creates a hierarchy where `subtopic-a` and `subtopic-b` are grouped with `root` and arranged below it.
+This creates the same tree layout, but hides the parent-child arrows and groups the related nodes in Excalidraw.
 
 ### Example 2: Learning Path with Prerequisites
 
@@ -451,6 +509,22 @@ related: fundamentals
 
 Advanced topics with deep connections.
 ````
+
+### Example 3: Resource Link Node
+
+```markdown
+## Query Profiling {#query-profiling}
+
+Core notes about reading Snowflake query performance.
+
+### Snowflake Docs {#snowflake-docs}
+
+> [!meta]
+> type: link
+> target: https://docs.snowflake.com/
+```
+
+This creates a clickable link node. Because it is nested under `query-profiling`, the builder automatically adds the built-in `link` edge if you do not explicitly define one.
 
 **edge_config.json:**
 
@@ -556,4 +630,3 @@ This creates two nodes connected with a dashed line (no arrow) indicating contra
 - Ensure the target node ID exists in one of the `.md` files
 - Verify the ID matches exactly (IDs are case-sensitive)
 - Check that all `.md` files are in the same folder
-

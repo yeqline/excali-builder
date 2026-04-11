@@ -4,9 +4,9 @@ This guide explains how to use the CSV parser to create Excalidraw diagrams from
 
 ## Overview
 
-The CSV parser reads node and edge definitions from CSV files and converts them into Excalidraw diagrams. The parser supports two types of connections:
+The CSV parser reads node and edge definitions from CSV files and converts them into Excalidraw diagrams. Fresh builds always use a tree layout. The hierarchy for that tree comes from edges with `edge_type: parent_child`.
 
-- **Container connections**: Grouping/hierarchy relationships (children are grouped with their parent)
+- **Container connections**: No arrow is drawn; related nodes are grouped in Excalidraw
 - **Line connections**: Relationship arrows between nodes
 
 ## Project Structure
@@ -60,16 +60,19 @@ Defines connections between nodes. Required columns:
 
 ```csv
 from,to,edge_type,label
-root,auth,port_group,
-root,db,port_group,
-root,api,port_group,
-auth,user-service,port_group,
+root,auth,parent_child,
+root,db,parent_child,
+root,api,parent_child,
+auth,user-service,parent_child,
 db,user-service,directional_link,queries
 user-service,cache,directional_link,uses
 api,user-service,directional_link,calls
 ```
 
-**Important**: The `connection_type` (container vs line) is determined from `edge_config.json` based on the `edge_type`. You don't specify it in the CSV.
+**Important**:
+
+- Use `edge_type: parent_child` for edges that should define the tree layout.
+- The `connection_type` (container vs line) is still determined from `edge_config.json`; it only affects rendering.
 
 ## Configuration Files
 
@@ -80,16 +83,25 @@ General configuration for the diagram project.
 ```json
 {
   "parser_type": "csv",
-  "default_layout": "radial"
+  "layout": {
+    "direction": "left-right",
+    "level_spacing": 180,
+    "sibling_spacing": 40,
+    "root_spacing": 100,
+    "start_x": 120,
+    "start_y": 120
+  }
 }
 ```
 
 **Options:**
 
 - `parser_type`: Must be `"csv"` for CSV parser
-- `default_layout`: Default layout algorithm for nodes without positions
-  - `"radial"`: Circular hierarchical layout (default)
-  - `"tree"`: Traditional tree layout
+- `layout.direction`: Tree direction. One of `"left-right"`, `"right-left"`, `"top-down"`, `"bottom-up"`
+- `layout.level_spacing`: Gap between parent and child levels
+- `layout.sibling_spacing`: Gap between sibling subtrees
+- `layout.root_spacing`: Gap between separate top-level trees
+- `layout.start_x`, `layout.start_y`: Starting position for the initial layout
 
 ### node_config.json
 
@@ -139,46 +151,36 @@ Defines styling for different node types. Each node type can have its own visual
 
 ### edge_config.json
 
-Defines styling and behavior for different edge types. Each edge type must specify its `connection_type` (container or line) along with its styling properties.
+Defines rendering behavior for different edge types. Each edge type must specify its `connection_type` (`container` or `line`) along with any line styling properties.
 
-#### Container Connection Configuration
+#### Parent-Child Hierarchy
 
-For edge types with `"connection_type": "container"`:
+Only edges with `edge_type: parent_child` define the tree layout. You can still render those edges in two ways:
 
 ```json
 {
-  "port_group": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+  "parent_child": {
+    "connection_type": "container"
   }
 }
 ```
 
-**Container Connection Options:**
+or
 
-- `connection_type`: Must be `"container"` for grouping connections
-- `placement`: How children are positioned relative to parent
-  - `"inside"`: Children are positioned inside the parent's bounds
-  - `"outside"`: Children are positioned outside/around the parent (default)
-- `direction`: Direction children are arranged relative to parent
-  - `"top"`: Children arranged above the parent
-  - `"bottom"`: Children arranged below the parent (default)
-  - `"left"`: Children arranged to the left of the parent
-  - `"right"`: Children arranged to the right of the parent
-  - `"radial"`: Children arranged in a circular pattern around the parent
-  - `"center_h"`: Children arranged horizontally at the center height (middle of container) - only for `placement: "inside"`
-  - `"center_v"`: Children arranged vertically at the center width (middle of container) - only for `placement: "inside"`
-- `child_offset`: Spacing between parent and children in pixels (integer, used when `placement: "outside"`)
-- `group_padding`: Padding inside parent bounds in pixels (integer, used when `placement: "inside"`)
+```json
+{
+  "parent_child": {
+    "connection_type": "line",
+    "arrow_end": "arrow"
+  }
+}
+```
 
-**Container Connection Behavior:**
+**Behavior:**
 
-- Container connections create visual groups in Excalidraw
-- Selecting one element in a group selects all elements in that group
-- No arrows are drawn for container connections (they represent grouping, not relationships)
+- The initial layout is the same in both cases.
+- `container` hides the arrow and groups the related nodes in Excalidraw.
+- `line` draws a visible parent-child line.
 
 #### Line Connection Configuration
 
@@ -238,7 +240,7 @@ For edge types with `"connection_type": "line"`:
 3. Add `edge.csv` with your connections
 4. Create `node_config.json` with node type styling
 5. Create `edge_config.json` with edge type styling (including `connection_type` for each edge type)
-6. Create `config.json` with parser type and layout settings
+6. Create `config.json` with parser type and tree layout settings
 
 ### 2. Build the Diagram
 
@@ -246,6 +248,12 @@ Run the build command:
 
 ```bash
 uv run excali-builder your-diagram-folder
+```
+
+To discard the current saved layout and generate a fresh first-pass layout while preserving saved node sizes:
+
+```bash
+uv run excali-builder --full-refresh your-diagram-folder
 ```
 
 This will:
@@ -291,25 +299,21 @@ child2,component,Child 2,Second child
 
 ```csv
 from,to,edge_type,label
-root,child1,port_group,
-root,child2,port_group,
+root,child1,parent_child,
+root,child2,parent_child,
 ```
 
 **edge_config.json:**
 
 ```json
 {
-  "port_group": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "bottom",
-    "child_offset": 30,
-    "group_padding": 20
+  "parent_child": {
+    "connection_type": "container"
   }
 }
 ```
 
-This creates a hierarchy where `child1` and `child2` are grouped with `root` and arranged below it.
+This creates a hierarchy where `child1` and `child2` are laid out as children of `root`, without visible parent-child arrows.
 
 ### Example 2: Relationship Diagram
 
@@ -346,7 +350,7 @@ service-b,database,queries,queries
 
 This creates arrows showing relationships between services.
 
-### Example 3: Mixed Container and Line Connections
+### Example 3: Mixed Hierarchy and Relationship Edges
 
 You can combine both types in the same diagram:
 
@@ -354,8 +358,8 @@ You can combine both types in the same diagram:
 
 ```csv
 from,to,edge_type,label
-root,module-a,port_group,
-root,module-b,port_group,
+root,module-a,parent_child,
+root,module-b,parent_child,
 module-a,service-x,calls,
 module-b,service-x,calls,
 ```
@@ -364,12 +368,8 @@ module-b,service-x,calls,
 
 ```json
 {
-  "port_group": {
-    "connection_type": "container",
-    "placement": "outside",
-    "direction": "radial",
-    "child_offset": 50,
-    "group_padding": 15
+  "parent_child": {
+    "connection_type": "container"
   },
   "calls": {
     "connection_type": "line",
@@ -382,23 +382,23 @@ module-b,service-x,calls,
 }
 ```
 
-This creates a diagram where `module-a` and `module-b` are grouped with `root` in a radial pattern, and both call `service-x` via arrows.
+This creates a diagram where `module-a` and `module-b` are laid out as children of `root`, and both call `service-x` via arrows.
 
 ## Tips and Best Practices
 
 1. **Stable Node IDs**: Use stable, meaningful IDs in `node_id` column. These are used for syncing positions, so changing them will lose saved positions.
 
-2. **Edge Types**: Create meaningful edge type names (e.g., `"dependency"`, `"inheritance"`, `"port_group"`) rather than generic names. This makes your configuration more maintainable.
+2. **Edge Types**: Create meaningful edge type names (e.g., `"dependency"`, `"queries"`, `"calls"`) rather than generic names. Reserve `parent_child` for hierarchy.
 
-3. **Container vs Line**: Use container connections for grouping/hierarchy (e.g., modules containing components). Use line connections for relationships (e.g., dependencies, data flow).
+3. **Container vs Line**: Use `parent_child` for hierarchy, then choose whether that hierarchy should render as `container` or `line`. Use other line edge types for relationships such as dependencies or data flow.
 
 4. **Position Persistence**: After editing positions in Excalidraw, always run the build command again to sync positions. The positions are saved to `positions.json` and will be used in future builds.
 
-5. **Layout Direction**: For container connections, choose `direction` based on your diagram's flow:
+5. **Layout Direction**: Choose `layout.direction` in `config.json` based on your diagram's flow:
 
-   - `"bottom"`: Top-down hierarchy (most common)
-   - `"right"`: Left-to-right flow
-   - `"radial"`: Circular/network diagrams
+   - `"left-right"`: Most mind maps and concept maps
+   - `"top-down"`: Traditional org-chart style
+   - `"right-left"` / `"bottom-up"`: Alternative directional flows
 
 6. **Color Schemes**: Use consistent color schemes across node types to create visual categories (e.g., all modules use green, all components use yellow).
 
@@ -429,6 +429,6 @@ This creates a diagram where `module-a` and `module-b` are grouped with `root` i
 
 ### Layout issues
 
-- Adjust `child_offset` and `group_padding` values for better spacing
-- Try different `direction` values for container connections
-- Use `default_layout` in `config.json` to change the overall layout algorithm
+- Adjust `layout.level_spacing`, `layout.sibling_spacing`, or `layout.root_spacing` in `config.json`
+- Try a different `layout.direction`
+- Use `--full-refresh` when you want to rebuild the tree from scratch while keeping saved node sizes

@@ -50,6 +50,7 @@ class MarkdownParser(BaseParser):
             e for e in graph.edges 
             if e.source_id in graph.nodes and e.target_id in graph.nodes
         ]
+        self._validate_link_targets(graph)
         
         return graph
 
@@ -90,7 +91,7 @@ class MarkdownParser(BaseParser):
             if heading_match:
                 # Save previous node's content
                 if current_node:
-                    current_node.metadata["content"] = '\n'.join(content_lines).strip()
+                    self._finalize_node(graph, current_node, content_lines, config)
                     content_lines = []
                 
                 # Parse heading
@@ -115,24 +116,17 @@ class MarkdownParser(BaseParser):
                     id=node_id,
                     label=title,
                     type="concept",  # Default type
-                    metadata={"level": level, "source_file": str(file_path.name)},
+                    metadata={
+                        "level": level,
+                        "source_file": str(file_path.name),
+                        "hierarchy_parent_id": parent_id,
+                        "has_explicit_link_edge": False,
+                    },
                 )
                 graph.add_node(current_node)
                 
                 # Add to parent stack
                 parent_stack.append((level, node_id))
-                
-                # Add parent-child edge if has parent
-                if parent_id:
-                    connection_type_str = ConfigLoader.get_connection_type(config, "parent_child")
-                    connection_type = ConnectionType.CONTAINER if connection_type_str == "container" else ConnectionType.LINE
-                    
-                    graph.add_edge(Edge(
-                        source_id=parent_id,
-                        target_id=node_id,
-                        connection_type=connection_type,
-                        edge_type="parent_child",
-                    ))
                 
                 i += 1
                 continue
@@ -200,7 +194,52 @@ class MarkdownParser(BaseParser):
         
         # Save last node's content
         if current_node:
-            current_node.metadata["content"] = '\n'.join(content_lines).strip()
+            self._finalize_node(graph, current_node, content_lines, config)
+
+    def _finalize_node(self, graph: Graph, node: Node, content_lines: List[str], config) -> None:
+        """Store content and create any inferred structural edges."""
+        self._store_node_content(node, content_lines)
+        self._add_default_hierarchy_edge(graph, node, config)
+
+    def _add_default_hierarchy_edge(self, graph: Graph, node: Node, config) -> None:
+        """Add the inferred edge from heading hierarchy unless explicitly overridden."""
+        parent_id = node.metadata.get("hierarchy_parent_id") if node.metadata else None
+        if not parent_id:
+            return
+
+        if any(
+            edge.source_id == parent_id and edge.target_id == node.id
+            for edge in graph.edges
+        ):
+            return
+
+        if node.type == "link" and not node.metadata.get("has_explicit_link_edge"):
+            connection_type_str = ConfigLoader.get_connection_type(config, "link")
+            edge_type = "link"
+        else:
+            connection_type_str = ConfigLoader.get_connection_type(config, "parent_child")
+            edge_type = "parent_child"
+
+        connection_type = (
+            ConnectionType.CONTAINER
+            if connection_type_str == "container"
+            else ConnectionType.LINE
+        )
+        graph.add_edge(
+            Edge(
+                source_id=parent_id,
+                target_id=node.id,
+                connection_type=connection_type,
+                edge_type=edge_type,
+            )
+        )
+
+    def _store_node_content(self, node: Node, content_lines: List[str]) -> None:
+        """Store markdown body text in both raw and rendered metadata fields."""
+        content = "\n".join(content_lines).strip()
+        node.metadata["content"] = content
+        if content:
+            node.metadata["text"] = content
 
     def _apply_meta(self, node: Node, key: str, value: str) -> None:
         """Apply a meta field to a node."""
@@ -221,6 +260,7 @@ class MarkdownParser(BaseParser):
             'prereqs': 'prereqs',
             'related': 'related',
             'contrasts': 'contrasts',
+            'link': 'link',
         }
         
         for line in lines:
@@ -247,6 +287,8 @@ class MarkdownParser(BaseParser):
                     # Clean up target ID (handle YAML list format)
                     target_id = target_id.strip().lstrip('- ')
                     if target_id and target_id != source_id:
+                        if edge_type == "link" and source_id in graph.nodes:
+                            graph.nodes[source_id].metadata["has_explicit_link_edge"] = True
                         graph.add_edge(Edge(
                             source_id=source_id,
                             target_id=target_id,
@@ -254,7 +296,23 @@ class MarkdownParser(BaseParser):
                             edge_type=edge_type,
                         ))
 
+    def _validate_link_targets(self, graph: Graph) -> None:
+        """Validate built-in link node targets after all files are parsed."""
+        for node in graph.nodes.values():
+            if node.type != "link":
+                continue
+
+            target = (node.metadata.get("target") or "").strip()
+            if not target:
+                raise ValueError(f"Link node '{node.id}' is missing required meta field 'target'")
+
+            if target.startswith("#"):
+                target_node_id = target[1:]
+                if not target_node_id or target_node_id not in graph.nodes:
+                    raise ValueError(
+                        f"Link node '{node.id}' references missing target node '{target}'"
+                    )
+
     def get_supported_formats(self) -> List[str]:
         """Return list of supported file extensions."""
         return ["md", "markdown"]
-

@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Optional
+
 from .schema import (
-    GlobalConfig,
-    NodeTypeConfig,
-    ContainerConnectionConfig,
-    LineConnectionConfig,
     EdgeTypeConfig,
+    GlobalConfig,
+    LayoutConfig,
+    LineConnectionConfig,
+    NodeTypeConfig,
 )
 
 
@@ -20,7 +21,6 @@ class ConfigLoader:
         """Load configuration from a folder (node_config.json, edge_config.json, config.json)."""
         config = GlobalConfig()
 
-        # Load node_config.json
         node_config_path = folder_path / "node_config.json"
         if node_config_path.exists():
             with open(node_config_path, "r", encoding="utf-8") as f:
@@ -28,29 +28,37 @@ class ConfigLoader:
                 for node_type, node_config in node_config_data.items():
                     config.node_types[node_type] = NodeTypeConfig(**node_config)
 
-        # Load edge_config.json
         edge_config_path = folder_path / "edge_config.json"
         if edge_config_path.exists():
             with open(edge_config_path, "r", encoding="utf-8") as f:
                 edge_config_data = json.load(f)
                 for edge_type, edge_config in edge_config_data.items():
-                    # Load unified edge type config (includes connection_type)
                     config.edge_types[edge_type] = EdgeTypeConfig(**edge_config)
 
-        # Load config.json for global settings
         main_config_path = folder_path / "config.json"
         if main_config_path.exists():
             with open(main_config_path, "r", encoding="utf-8") as f:
                 main_config_data = json.load(f)
-                if "default_layout" in main_config_data:
-                    config.default_layout = main_config_data["default_layout"]
+                if "layout" in main_config_data:
+                    config.layout = LayoutConfig(**main_config_data["layout"])
 
         return config
 
     @staticmethod
     def get_node_config(config: GlobalConfig, node_type: str) -> NodeTypeConfig:
         """Get node configuration for a type, with defaults."""
-        return config.node_types.get(node_type, NodeTypeConfig())
+        if node_type in config.node_types:
+            return config.node_types[node_type]
+        if node_type == "link":
+            return NodeTypeConfig(
+                color="#1D4ED8",
+                backgroundColor="#DBEAFE",
+                shape="rectangle",
+                font_size=13,
+                padding=10,
+                borderRadius=12,
+            )
+        return NodeTypeConfig()
 
     @staticmethod
     def get_edge_type_config(config: GlobalConfig, edge_type: str) -> Optional[EdgeTypeConfig]:
@@ -63,41 +71,28 @@ class ConfigLoader:
         edge_config = config.edge_types.get(edge_type)
         if edge_config:
             return edge_config.connection_type
-        # Default to line if not found
         return "line"
-
-    @staticmethod
-    def get_container_config(
-        config: GlobalConfig, edge_type: str
-    ) -> ContainerConnectionConfig:
-        """Get container connection configuration for an edge type, with defaults."""
-        edge_config = config.edge_types.get(edge_type)
-        if edge_config and edge_config.connection_type == "container":
-            return ContainerConnectionConfig(
-                connection_type="container",
-                placement=edge_config.placement or "outside",
-                direction=edge_config.direction or "bottom",
-                child_offset=edge_config.child_offset or 20,
-                group_padding=edge_config.group_padding or 15,
-            )
-        return ContainerConnectionConfig()
 
     @staticmethod
     def get_line_config(config: GlobalConfig, edge_type: str) -> LineConnectionConfig:
         """Get line connection configuration for an edge type, with defaults."""
         edge_config = config.edge_types.get(edge_type)
         if edge_config and edge_config.connection_type == "line":
-            # Preserve None values for arrow_start and arrow_end when explicitly set to None
-            # When loading from JSON, null becomes None, so we preserve it
-            arrow_start = edge_config.arrow_start
-            arrow_end = edge_config.arrow_end
             return LineConnectionConfig(
                 connection_type="line",
                 color=edge_config.color or "#000000",
                 stroke_width=edge_config.stroke_width or 2,
                 stroke_style=edge_config.stroke_style or "solid",
-                arrow_start=arrow_start,
-                arrow_end=arrow_end,  # Will be None if explicitly set to null in JSON
+                arrow_start=edge_config.arrow_start,
+                arrow_end=edge_config.arrow_end,
+            )
+        if edge_type == "link":
+            return LineConnectionConfig(
+                connection_type="line",
+                color="#2563EB",
+                stroke_width=2,
+                stroke_style="dashed",
+                arrow_start=None,
+                arrow_end=None,
             )
         return LineConnectionConfig()
-
