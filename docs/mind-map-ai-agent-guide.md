@@ -61,24 +61,22 @@ This automatically creates:
 
 **Special case**: If a nested node uses `> type: comment`, it still stays in the same hierarchy and layout, but the inferred edge to its parent uses the built-in `comment` style instead of `parent_child`.
 
-### Meta Block (Optional, immediately after heading)
+### Node Directives (Optional, immediately after heading)
 
-To set the node type or tags, add a `[!meta]` blockquote immediately after the heading:
+To set the node type or tags, add directive lines immediately after the heading:
 
 ```markdown
 ## My Concept {#my-concept}
 
-> [!meta]
 > type: concept
 > tags: networking, protocols
 ```
 
 **Rules:**
 
-- The meta block MUST start with `> [!meta]` on its own line.
-- Each subsequent line must start with `> ` followed by `key: value`.
-- The meta block ends at the first line that does NOT match `> key: value`.
-- If no meta block is present, the node type defaults to `concept`.
+- Each directive line must start with `> ` followed by `key: value`.
+- Directives must appear before normal body text starts.
+- If no `type` directive is present, the node type defaults to `concept`.
 
 **Available fields:**
 
@@ -90,22 +88,19 @@ To set the node type or tags, add a `[!meta]` blockquote immediately after the h
   - `comment` — Annotation/comment node with built-in comment edge behavior when nested
 - `tags`: Comma-separated list of tags for filtering/categorization.
 
-### Edges Block (Optional, after meta block)
+### Edge Directives (Optional, after node directives)
 
-To declare explicit relationships between nodes, add a fenced code block with the language `edges`:
+To declare explicit relationships between nodes, add `edge.<type>` directive lines:
 
-````markdown
+```markdown
 ## My Concept {#my-concept}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: other-id-a, other-id-b
-related: other-id-c
-contrasts: other-id-d
+> edge.prereqs: other-id-a, other-id-b
+> edge.related: other-id-c
+> edge.contrasts: other-id-d
 ```
-````
 
 **Edge types you can use:**
 
@@ -117,7 +112,7 @@ contrasts: other-id-d
 
 **Rules:**
 
-- Each line is `edge_type: id1, id2, id3` (comma-separated target IDs).
+- Each line is `edge.<type>: id1, id2, id3` (comma-separated target IDs).
 - Target IDs must match `{#id}` anchors on other headings.
 - Edges to non-existent IDs are silently dropped (no error, but the edge won't appear).
 - Do NOT declare `parent_child` edges here — those are automatic from heading hierarchy.
@@ -139,16 +134,15 @@ This creates a `related` edge from `auth` to `api-gateway`.
 
 - The syntax is `[Any Display Text](#target-id)`.
 - Only links starting with `#` are parsed as edges. External URLs are ignored.
-- These always create `related` edges. If you need `prereqs` or `contrasts`, use the edges block.
+- These always create `related` edges. If you need `prereqs` or `contrasts`, use edge directives.
 
 ### Node Content (Optional, for context)
 
-Any text between a heading and the next heading (excluding meta/edges blocks) is the node's body content. It's stored as metadata. Keep it concise — one or two sentences describing the concept.
+Any text between a heading and the next heading (excluding directive lines) is the node's body content. It's stored as metadata. Keep it concise — one or two sentences describing the concept.
 
 ```markdown
 ## TCP Handshake {#tcp-handshake}
 
-> [!meta]
 > type: concept
 
 The three-way handshake (SYN, SYN-ACK, ACK) establishes a reliable connection between client and server.
@@ -165,7 +159,7 @@ The three-way handshake (SYN, SYN-ACK, ACK) establishes a reliable connection be
 
 **Naming**: Use descriptive kebab-case names: `networking-basics.md`, `transport-layer.md`, etc.
 
-**Cross-file references**: IDs are global. A node in `file-a.md` can reference a node in `file-b.md` by ID in edges blocks and inline links.
+**Cross-file references**: IDs are global. A node in `file-a.md` can reference a node in `file-b.md` by ID in edge directives and inline links.
 
 ### File ordering
 
@@ -275,7 +269,6 @@ Use `type: link` when you want a resource node instead of a normal concept node:
 ```markdown
 ### Snowflake Docs {#snowflake-docs}
 
-> [!meta]
 > type: link
 > target: https://docs.snowflake.com/
 ```
@@ -285,7 +278,6 @@ or:
 ```markdown
 ### Jump To Workflow {#jump-to-workflow}
 
-> [!meta]
 > type: link
 > target: #practical-workflow
 ```
@@ -301,7 +293,6 @@ Use `type: comment` when you want a note/annotation that should still sit in the
 
 #### Comment: Whole repo state {#review-pane-whole-repo-note}
 
-> [!meta]
 > type: comment
 
 The pane can include your own unstaged changes too.
@@ -326,7 +317,7 @@ If a nested comment node does not declare anything special, the builder automati
 - Use `prereqs` sparingly — only when concept B truly requires understanding concept A first. This creates a directed learning path.
 - Use `related` for concepts that are associated but independent. Use these liberally — they make the map interconnected.
 - Use `contrasts` when two concepts are alternatives or opposites (e.g., SQL vs NoSQL, REST vs GraphQL).
-- Prefer inline links `[text](#id)` over edges blocks for casual associations mentioned in body text.
+- Prefer inline links `[text](#id)` over edge directives for casual associations mentioned in body text.
 
 ### Naming Conventions
 
@@ -351,79 +342,61 @@ Here is a complete small example for the subject "HTTP Protocol":
 ````markdown
 ## HTTP Protocol {#http}
 
-> [!meta]
 > type: category
 
 The foundation of data communication on the web.
 
 ### Request-Response Model {#req-res}
 
-> [!meta]
 > type: concept
 
 Client sends a request, server returns a response. Stateless by design.
 
 ### HTTP Methods {#http-methods}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: req-res
-```
+> edge.prereqs: req-res
 
 GET, POST, PUT, DELETE, PATCH — each has specific semantics and idempotency rules.
 
 #### GET {#http-get}
 
-> [!meta]
 > type: detail
 
 Retrieves a resource. Safe and idempotent. Should never modify server state.
 
 #### POST {#http-post}
 
-> [!meta]
 > type: detail
 
-```edges
-contrasts: http-get
-```
+> edge.contrasts: http-get
 
 Submits data to create a resource. Not idempotent.
 
 ### Status Codes {#status-codes}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: req-res
-related: http-methods
-```
+> edge.prereqs: req-res
+> edge.related: http-methods
 
 1xx informational, 2xx success, 3xx redirection, 4xx client error, 5xx server error.
 
 ### Headers {#http-headers}
 
-> [!meta]
 > type: concept
 
-```edges
-related: req-res
-```
+> edge.related: req-res
 
 Metadata in requests and responses: Content-Type, Authorization, Cache-Control, etc.
 
 ### HTTPS {#https}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: http
-related: http-headers
-```
+> edge.prereqs: http
+> edge.related: http-headers
 
 HTTP over TLS. Encrypts communication between client and server.
 
@@ -528,8 +501,8 @@ Before you output your files, verify:
 - [ ] IDs contain only `[a-zA-Z0-9_-]` characters (regex: `[\w-]+`)
 - [ ] Edge targets reference IDs that exist somewhere in the files
 - [ ] `prereqs` edges point in the right direction (this node depends on target)
-- [ ] Meta blocks use `> [!meta]` syntax with `> key: value` lines
-- [ ] Edges blocks use ` ```edges ` fencing (not ` ```yaml ` or other)
+- [ ] Node directives use `> key: value` immediately under the heading
+- [ ] Explicit relationships use `> edge.<type>: target-id` syntax
 - [ ] No duplicate edges (same source → target with same type)
 - [ ] Node types match keys in `node_config.json`
 - [ ] Total node count is 20-60 for readability

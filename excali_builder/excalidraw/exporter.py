@@ -735,14 +735,27 @@ class ExcalidrawExporter:
         if not target:
             return None
 
-        if target.startswith("#"):
-            target_node_id = target[1:]
+        target_node_id = self._get_internal_link_target_node_id(target, node_element_map)
+        if target_node_id:
             target_element_id = node_element_map.get(target_node_id)
             if not target_element_id:
                 return None
-            return f"https://excalidraw.com/?element={target_element_id}"
+            return f"https://excalidraw.com/{target_node_id}?element={target_element_id}"
 
         return target
+
+    def _get_internal_link_target_node_id(
+        self,
+        target: str,
+        node_element_map: Dict[str, str],
+    ) -> Optional[str]:
+        """Return the internal target node id when a link target points at this canvas."""
+        if target.startswith("#"):
+            target_node_id = target[1:]
+            return target_node_id or None
+        if target in node_element_map:
+            return target
+        return None
 
     def _get_excalidraw_font_family(self, font_family: Any) -> int:
         """Map a user-friendly font name to Excalidraw's numeric font family."""

@@ -12,11 +12,7 @@ from .base import BaseParser
 
 # Regex patterns for parsing markdown
 HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+?)\s*\{#([\w-]+)\}\s*$')
-META_START_PATTERN = re.compile(r'^>\s*\[!meta\]\s*$')
-META_LINE_PATTERN = re.compile(r'^>\s*(\w+):\s*(.*)$')
-EDGES_START_PATTERN = re.compile(r'^```edges\s*$')
-EDGES_END_PATTERN = re.compile(r'^```\s*$')
-EDGE_LINE_PATTERN = re.compile(r'^(\w+):\s*(.+)$')
+DIRECTIVE_LINE_PATTERN = re.compile(r'^>\s*([A-Za-z_][\w.-]*):\s*(.*)$')
 INLINE_LINK_PATTERN = re.compile(r'\[[^\]]+\]\(#([\w-]+)\)')
 YAML_FRONT_MATTER_START = re.compile(r'^---\s*$')
 
@@ -31,8 +27,8 @@ class MarkdownParser(BaseParser):
     
     Parses markdown files following these conventions:
     - Nodes: Headings with {#id} anchors (e.g., ## Title {#my-node})
-    - Meta: [!meta] blockquote with type field
-    - Edges: ```edges code fence with prereqs/related/contrasts
+    - Directives: > key: value lines directly below the heading
+    - Edge directives: > edge.related: other-node
     - Inline links: [text](#id) become related edges
     - Parent-child: Inferred from heading hierarchy
     - Built-in child node types can swap the rendered hierarchy edge type
@@ -70,11 +66,9 @@ class MarkdownParser(BaseParser):
         # Track parsing state
         current_node: Optional[Node] = None
         parent_stack: List[Tuple[int, str]] = []  # (level, node_id)
-        in_meta_block = False
-        in_edges_block = False
         in_yaml_front_matter = False
+        in_directive_zone = False
         content_lines: List[str] = []
-        edges_lines: List[str] = []
         
         i = 0
         while i < len(lines):
@@ -130,6 +124,7 @@ class MarkdownParser(BaseParser):
                     },
                 )
                 graph.add_node(current_node)
+                in_directive_zone = True
                 
                 # Add to parent stack
                 parent_stack.append((level, node_id))
@@ -137,47 +132,23 @@ class MarkdownParser(BaseParser):
                 i += 1
                 continue
             
-            # Check for meta block start
-            if META_START_PATTERN.match(line):
-                in_meta_block = True
-                i += 1
-                continue
-            
-            # Parse meta lines
-            if in_meta_block:
-                meta_match = META_LINE_PATTERN.match(line)
-                if meta_match and current_node:
-                    key = meta_match.group(1).strip()
-                    value = meta_match.group(2).strip()
-                    self._apply_meta(current_node, key, value)
+            if current_node and in_directive_zone:
+                directive_match = DIRECTIVE_LINE_PATTERN.match(line)
+                if directive_match:
+                    key = directive_match.group(1).strip()
+                    value = directive_match.group(2).strip()
+                    self._apply_directive(graph, current_node, key, value, config)
                     i += 1
                     continue
-                else:
-                    # End of meta block
-                    in_meta_block = False
-            
-            # Check for edges block start
-            if EDGES_START_PATTERN.match(line):
-                in_edges_block = True
-                edges_lines = []
-                i += 1
-                continue
-            
-            # Parse edges block
-            if in_edges_block:
-                if EDGES_END_PATTERN.match(line):
-                    # Process edges
-                    if current_node:
-                        self._parse_edges(graph, current_node.id, edges_lines, config)
-                    in_edges_block = False
-                    edges_lines = []
-                else:
-                    edges_lines.append(line)
-                i += 1
-                continue
+
+                if not line.strip():
+                    i += 1
+                    continue
+
+                in_directive_zone = False
             
             # Collect content for current node and extract inline links
-            if current_node and not in_meta_block and not in_edges_block:
+            if current_node:
                 # Extract inline links as related edges
                 for link_match in INLINE_LINK_PATTERN.finditer(line):
                     target_id = link_match.group(1)
@@ -249,6 +220,23 @@ class MarkdownParser(BaseParser):
             return "parent_child"
         return BUILTIN_CHILD_EDGE_TYPES.get(node.type, "parent_child")
 
+    def _apply_directive(
+        self,
+        graph: Graph,
+        node: Node,
+        key: str,
+        value: str,
+        config,
+    ) -> None:
+        """Apply a simplified blockquote directive to the current node."""
+        if key.startswith("edge."):
+            edge_type = key.split(".", 1)[1].strip()
+            if edge_type:
+                self._add_edges(graph, node.id, edge_type, value, config)
+            return
+
+        self._apply_meta(node, key, value)
+
     def _apply_meta(self, node: Node, key: str, value: str) -> None:
         """Apply a meta field to a node."""
         if key == "type":
@@ -261,49 +249,36 @@ class MarkdownParser(BaseParser):
             # Store other meta fields in metadata
             node.metadata[key] = value
 
-    def _parse_edges(self, graph: Graph, source_id: str, lines: List[str], config) -> None:
-        """Parse edges from an edges block."""
-        # Map markdown edge types to excali-builder edge types
-        edge_type_map = {
-            'comment': 'comment',
-            'prereqs': 'prereqs',
-            'related': 'related',
-            'contrasts': 'contrasts',
-            'link': 'link',
-        }
-        
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            
-            match = EDGE_LINE_PATTERN.match(line)
-            if match:
-                edge_type_str = match.group(1).strip()
-                targets_str = match.group(2).strip()
-                
-                # Get edge type (use as-is if not in map)
-                edge_type = edge_type_map.get(edge_type_str, edge_type_str)
-                
-                # Look up connection_type from config
-                connection_type_str = ConfigLoader.get_connection_type(config, edge_type)
-                connection_type = ConnectionType.CONTAINER if connection_type_str == "container" else ConnectionType.LINE
-                
-                # Parse targets (comma-separated)
-                targets = [t.strip() for t in targets_str.split(',') if t.strip()]
-                
-                for target_id in targets:
-                    # Clean up target ID (handle YAML list format)
-                    target_id = target_id.strip().lstrip('- ')
-                    if target_id and target_id != source_id:
-                        if edge_type == "link" and source_id in graph.nodes:
-                            graph.nodes[source_id].metadata["has_explicit_link_edge"] = True
-                        graph.add_edge(Edge(
-                            source_id=source_id,
-                            target_id=target_id,
-                            connection_type=connection_type,
-                            edge_type=edge_type,
-                        ))
+    def _add_edges(
+        self,
+        graph: Graph,
+        source_id: str,
+        edge_type: str,
+        targets_str: str,
+        config,
+    ) -> None:
+        """Add one or more edges of the same type from a comma-separated target list."""
+        connection_type_str = ConfigLoader.get_connection_type(config, edge_type)
+        connection_type = (
+            ConnectionType.CONTAINER
+            if connection_type_str == "container"
+            else ConnectionType.LINE
+        )
+
+        targets = [t.strip() for t in targets_str.split(',') if t.strip()]
+        for target_id in targets:
+            target_id = target_id.strip().lstrip('- ')
+            if target_id and target_id != source_id:
+                if edge_type == "link" and source_id in graph.nodes:
+                    graph.nodes[source_id].metadata["has_explicit_link_edge"] = True
+                graph.add_edge(
+                    Edge(
+                        source_id=source_id,
+                        target_id=target_id,
+                        connection_type=connection_type,
+                        edge_type=edge_type,
+                    )
+                )
 
     def _validate_link_targets(self, graph: Graph) -> None:
         """Validate built-in link node targets after all files are parsed."""
@@ -315,12 +290,19 @@ class MarkdownParser(BaseParser):
             if not target:
                 raise ValueError(f"Link node '{node.id}' is missing required meta field 'target'")
 
-            if target.startswith("#"):
-                target_node_id = target[1:]
-                if not target_node_id or target_node_id not in graph.nodes:
-                    raise ValueError(
-                        f"Link node '{node.id}' references missing target node '{target}'"
-                    )
+            target_node_id = self._get_internal_link_target_node_id(target, graph)
+            if target_node_id and target_node_id not in graph.nodes:
+                raise ValueError(
+                    f"Link node '{node.id}' references missing target node '{target}'"
+                )
+
+    def _get_internal_link_target_node_id(self, target: str, graph: Graph) -> Optional[str]:
+        """Return the internal target node id when a link target points at this graph."""
+        if target.startswith("#"):
+            return target[1:] or None
+        if target in graph.nodes:
+            return target
+        return None
 
     def get_supported_formats(self) -> List[str]:
         """Return list of supported file extensions."""

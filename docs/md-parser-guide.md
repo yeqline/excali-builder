@@ -8,8 +8,7 @@ The Markdown parser reads one or more `.md` files in a folder and converts them 
 
 - **Headings with anchors** become nodes (e.g., `## Topic {#my-topic}`)
 - **Heading hierarchy** creates structural parent-child relationships (H2 → H3 → H4)
-- **Meta blocks** define node type and tags
-- **Edges blocks** declare explicit relationships (prereqs, related, contrasts)
+- **Directive lines** define node type, tags, targets, and explicit edges
 - **Inline links** create implicit related edges
 
 This format keeps your Markdown files readable in any editor while enabling structured diagram generation.
@@ -32,7 +31,7 @@ your-diagram/
 
 - A **node** is a box in the diagram. In Markdown, a node comes from a heading with an anchor such as `## Topic {#topic}`. The heading text becomes the node title, and the body under that heading becomes the node text.
 - An **edge** is a relationship between two nodes. In Markdown, some edges are created by you in `edges` blocks such as `prereqs` or `related`, and one structural relationship is created automatically by the builder from heading nesting.
-- **Node types are user-defined labels** such as `category`, `concept`, `detail`, or `principle`. You assign them in the `[!meta]` block with `> type: ...`, and `node_config.json` looks up how that type should look. These names are not built into the builder. If you omit `type`, Markdown defaults to `concept`.
+- **Node types are user-defined labels** such as `category`, `concept`, `detail`, or `principle`. You assign them with directive lines such as `> type: ...`, and `node_config.json` looks up how that type should look. These names are not built into the builder. If you omit `type`, Markdown defaults to `concept`.
 - **Edge types are also user-defined names** such as `prereqs`, `related`, and `contrasts`. You define their meaning in `edge_config.json`. Markdown also has built-in hierarchy-related edge types such as `parent_child`, `link`, and `comment` that can be inferred from heading nesting.
 - **Markdown has two built-in special node types: `link` and `comment`.** A `link` node represents a navigation target. A `comment` node is an annotation/aside that still participates in the tree layout. Both have built-in node and edge defaults, so the minimum Markdown works without adding them to config. You only need to add them if you want to override the defaults styling.
 - **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
@@ -75,28 +74,42 @@ Every concept you want as a box on the canvas is a Markdown heading with a stabl
 
 This creates three nodes: `sql-joins` (parent) with two children: `inner-join` and `outer-join`.
 
-### Meta Block (Node Type and Tags)
+### Node Directives (Type, Tags, Target)
 
-Right under the heading, add a blockquote with `[!meta]` to define node type and tags.
+Right under the heading, add blockquote directive lines to define node type, tags, targets, and edges.
 
 **Syntax:**
 
 ```markdown
 ## My Concept {#my-concept}
 
-> [!meta]
 > type: concept
 > tags: database, sql
 ```
 
-**Meta Fields:**
+Explicit edges use the same directive style:
+
+```markdown
+## Review Pane {#review-pane}
+> type: concept
+> edge.related: review-pane-mirrors-git
+> edge.contrasts: ide-approval-loop
+```
+
+**Directive Rules:**
+
+- Directives must appear immediately under the heading, before normal body text starts
+- Each directive line must start with `> ` followed by `key: value`
+- `edge.<type>:` creates one or more explicit edges of that type
+
+**Node Fields:**
 
 - `type`: Node type for styling lookup in `node_config.json`
   - Common types: `concept`, `example`, `code`, `table`
   - Defaults to `concept` if not specified
 - `target`: Used by built-in `link` nodes only
   - `https://...` opens an external URL
-  - `#node-id` jumps to another node in the same Excalidraw canvas
+  - `node-id` or `#node-id` jumps to another node in the same Excalidraw canvas
 - `tags`: Comma-separated list of tags (stored in metadata, can be used for filtering)
 
 Built-in node types:
@@ -109,26 +122,23 @@ Built-in node types:
 ```markdown
 ## User Authentication {#user-auth}
 
-> [!meta]
 > type: module
 > tags: security, backend
 ```
 
-### Edges Block (Explicit Relationships)
+### Edge Directives (Explicit Relationships)
 
-Use a code fence named `edges` to declare explicit relationships between nodes.
+Use `> edge.<type>:` directive lines to declare explicit relationships between nodes.
 
 **Syntax:**
 
-````markdown
+```markdown
 ## My Concept {#my-concept}
 
-```edges
-prereqs: other-concept-id
-related: concept-a, concept-b
-contrasts: alternative-concept
+> edge.prereqs: other-concept-id
+> edge.related: concept-a, concept-b
+> edge.contrasts: alternative-concept
 ```
-````
 
 **Edge Types:**
 
@@ -143,7 +153,7 @@ contrasts: alternative-concept
 - Use comma-separated IDs on one line
 - IDs reference the `{#id}` anchors of other nodes
 - Edges to non-existent nodes are automatically removed
-- The `edges` block is optional
+- Edge directives are optional
 
 ### Inline Links (Implicit Related Edges)
 
@@ -183,7 +193,6 @@ Use `type: link` when you want a node to be clickable rather than explanatory.
 ```markdown
 ### Snowflake Docs {#snowflake-docs}
 
-> [!meta]
 > type: link
 > target: https://docs.snowflake.com/
 ```
@@ -193,7 +202,6 @@ Or for an internal jump:
 ```markdown
 ### Jump To Workflow {#jump-to-workflow}
 
-> [!meta]
 > type: link
 > target: #practical-workflow
 ```
@@ -202,10 +210,10 @@ Rules:
 
 - A `link` node must have exactly one `target`.
 - `target` is inferred automatically:
-  - starts with `#` → internal node jump
+  - matches a node id or starts with `#` → internal node jump
   - anything else → external URL/string link
 - If a nested `link` node does not declare an explicit `link:` edge, the builder automatically creates a built-in `link` edge from its parent to the link node.
-- If you do declare explicit `link:` edges in an `edges` block, those explicit edges are used instead of the default parent link edge.
+- If you do declare explicit `edge.link:` directives, those explicit edges are used instead of the default parent link edge.
 
 ### Built-in Comment Nodes
 
@@ -216,7 +224,6 @@ Use `type: comment` when you want a child node to behave like an annotation whil
 
 #### Comment: Includes your own changes too {#review-pane-note}
 
-> [!meta]
 > type: comment
 
 The review pane reflects the whole repo state, not just Codex edits.
@@ -354,9 +361,9 @@ Defines styling and behavior for different edge types.
 - `parent_child`: Auto-generated from heading hierarchy
 - `comment`: Built-in edge type used by nested `comment` nodes
 - `link`: Built-in edge type used by `link` nodes
-- `prereqs`: From edges block (directed dependency)
-- `related`: From edges block or inline links (association)
-- `contrasts`: From edges block (opposition)
+- `prereqs`: From edge directives (directed dependency)
+- `related`: From edge directives or inline links (association)
+- `contrasts`: From edge directives (opposition)
 
 **Important:**
 
@@ -382,8 +389,8 @@ Defines styling and behavior for different edge types.
 1. Create a folder for your diagram
 2. Add one or more `.md` files with your content
 3. Use `{#id}` anchors on headings you want as nodes
-4. Add meta blocks for node types
-5. Add edges blocks for explicit relationships
+4. Add `> type:` or other node directives
+5. Add `> edge.<type>:` directives for explicit relationships
 6. Create configuration files (`config.json`, `node_config.json`, `edge_config.json`)
 
 ### 2. Build the Diagram
@@ -454,12 +461,9 @@ This is the foundation for [Query Optimization](#query-optimization).
 <!-- In architecture.md -->
 ## Query Optimization {#query-optimization}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: sql-basics
-```
+> edge.prereqs: sql-basics
 ```
 
 The parser will:
@@ -478,7 +482,6 @@ The parser will:
 
 ## Root Topic {#root}
 
-> [!meta]
 > type: concept
 
 Main entry point for the topic.
@@ -511,31 +514,24 @@ This creates the same tree layout, but hides the parent-child arrows and groups 
 ````markdown
 ## Fundamentals {#fundamentals}
 
-> [!meta]
 > type: concept
 
 Basic building blocks.
 
 ## Intermediate {#intermediate}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: fundamentals
-```
+> edge.prereqs: fundamentals
 
 Builds on fundamentals.
 
 ## Advanced {#advanced}
 
-> [!meta]
 > type: concept
 
-```edges
-prereqs: intermediate
-related: fundamentals
-```
+> edge.prereqs: intermediate
+> edge.related: fundamentals
 
 Advanced topics with deep connections.
 ````
@@ -549,7 +545,6 @@ Core notes about reading Snowflake query performance.
 
 ### Snowflake Docs {#snowflake-docs}
 
-> [!meta]
 > type: link
 > target: https://docs.snowflake.com/
 ```
@@ -565,7 +560,6 @@ The review pane shows the repo state.
 
 ### Note About Mixed Diffs {#review-pane-note}
 
-> [!meta]
 > type: comment
 
 This can include your own local edits, not only Codex edits.
@@ -603,25 +597,19 @@ This creates a directed learning path: `fundamentals` → `intermediate` → `ad
 ````markdown
 ## SQL Databases {#sql-db}
 
-> [!meta]
 > type: concept
 > tags: database
 
-```edges
-contrasts: nosql-db
-```
+> edge.contrasts: nosql-db
 
 Relational databases with structured schemas.
 
 ## NoSQL Databases {#nosql-db}
 
-> [!meta]
 > type: concept
 > tags: database
 
-```edges
-contrasts: sql-db
-```
+> edge.contrasts: sql-db
 
 Schema-flexible databases for varied data.
 ````

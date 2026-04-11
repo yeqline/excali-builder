@@ -66,6 +66,17 @@ your-diagram/
 
 See [Markdown Parser Guide](docs/md-parser-guide.md) for details.
 
+Example Markdown:
+
+```markdown
+## Review Pane {#review-pane}
+> type: concept
+> edge.related: review-pane-mirrors-git
+> edge.contrasts: ide-approval-loop
+
+The review pane reflects the state of the repository.
+```
+
 ## Layout And Edges
 
 Initial layout is always a tree. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
@@ -84,7 +95,7 @@ In Markdown, there are also built-in `link` and `comment` node types:
 
 - a `link` node has one `target`
 - `target: https://...` creates an external link
-- `target: #node-id` creates an internal Excalidraw jump
+- `target: node-id` or `target: #node-id` creates an internal Excalidraw jump
 - if a nested `link` node does not declare an explicit `link:` edge, the builder automatically connects it to its parent with the built-in `link` edge style
 - a nested `comment` node is still laid out as a child, but its inferred edge uses the built-in `comment` edge style instead of `parent_child`
 

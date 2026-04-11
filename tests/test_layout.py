@@ -13,6 +13,54 @@ from excali_builder.parsers.markdown import MarkdownParser
 
 
 class LayoutRegressionTests(unittest.TestCase):
+    def test_markdown_directive_syntax_sets_meta_and_explicit_edges(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "doc.md").write_text(
+                "\n".join(
+                    [
+                        "## Review Pane {#review-pane}",
+                        "> type: concept",
+                        "> edge.related: review-pane-mirrors-git",
+                        "> edge.contrasts: ide-approval-loop",
+                        "",
+                        "The review pane reflects the repository state.",
+                        "",
+                        "## Git Review {#review-pane-mirrors-git}",
+                        "Body.",
+                        "",
+                        "## IDE Approval Loop {#ide-approval-loop}",
+                        "Body.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            graph = MarkdownParser().parse(folder, {})
+
+        review_pane = graph.nodes["review-pane"]
+        edge_pairs = sorted(
+            (edge.edge_type, edge.source_id, edge.target_id)
+            for edge in graph.edges
+        )
+
+        self.assertEqual(review_pane.type, "concept")
+        self.assertEqual(
+            review_pane.metadata["content"],
+            "The review pane reflects the repository state.",
+        )
+        self.assertEqual(
+            edge_pairs,
+            [
+                ("contrasts", "review-pane", "ide-approval-loop"),
+                ("related", "review-pane", "review-pane-mirrors-git"),
+            ],
+        )
+
     def test_markdown_comment_node_gets_default_comment_edge_to_parent(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             folder = Path(tmp_dir)
@@ -26,8 +74,6 @@ class LayoutRegressionTests(unittest.TestCase):
                         "## Topic {#topic}",
                         "",
                         "### Reviewer Note {#reviewer-note}",
-                        "",
-                        "> [!meta]",
                         "> type: comment",
                     ]
                 ),
@@ -61,7 +107,6 @@ class LayoutRegressionTests(unittest.TestCase):
                         "",
                         "### Snowflake Docs {#snowflake-docs}",
                         "",
-                        "> [!meta]",
                         "> type: link",
                         "> target: https://docs.snowflake.com/",
                     ]
@@ -92,7 +137,6 @@ class LayoutRegressionTests(unittest.TestCase):
                         "",
                         "### Jump {#jump}",
                         "",
-                        "> [!meta]",
                         "> type: link",
                         "> target: #topic",
                     ]
@@ -103,6 +147,65 @@ class LayoutRegressionTests(unittest.TestCase):
             graph = MarkdownParser().parse(folder, {})
 
         self.assertEqual(graph.nodes["jump"].metadata["target"], "#topic")
+
+    def test_markdown_link_node_bare_internal_target_is_validated(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "doc.md").write_text(
+                "\n".join(
+                    [
+                        "## Topic {#topic}",
+                        "",
+                        "### Jump {#jump}",
+                        "",
+                        "> type: link",
+                        "> target: topic",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            graph = MarkdownParser().parse(folder, {})
+
+        self.assertEqual(graph.nodes["jump"].metadata["target"], "topic")
+
+    def test_legacy_meta_and_edges_forms_are_treated_as_content(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "doc.md").write_text(
+                "\n".join(
+                    [
+                        "## Topic {#topic}",
+                        "",
+                        "> [!meta]",
+                        "> type: warning",
+                        "",
+                        "```edges",
+                        "related: other-node",
+                        "```",
+                        "",
+                        "## Other {#other-node}",
+                        "Body.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            graph = MarkdownParser().parse(folder, {})
+
+        self.assertEqual(graph.nodes["topic"].type, "concept")
+        self.assertFalse(
+            any(edge.source_id == "topic" and edge.target_id == "other-node" for edge in graph.edges)
+        )
+        self.assertIn("> [!meta]", graph.nodes["topic"].metadata["content"])
 
     def test_tree_layout_uses_parent_child_hierarchy_even_for_line_edges(self):
         graph = Graph()
@@ -538,7 +641,39 @@ class LayoutRegressionTests(unittest.TestCase):
         self.assertEqual(shapes["ext"]["link"], "https://docs.snowflake.com/")
         self.assertEqual(
             shapes["jump"]["link"],
-            f"https://excalidraw.com/?element={shapes['topic']['id']}",
+            f"https://excalidraw.com/topic?element={shapes['topic']['id']}",
+        )
+
+    def test_link_node_exports_bare_internal_target_as_excalidraw_jump(self):
+        graph = Graph()
+        topic = Node(id="topic", label="Topic", x=100, y=100, width=180, height=80)
+        jump = Node(
+            id="jump",
+            label="Jump",
+            type="link",
+            x=360,
+            y=180,
+            width=150,
+            height=60,
+            metadata={"target": "topic"},
+        )
+        for node in [topic, jump]:
+            graph.add_node(node)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "output.excalidraw"
+            ExcalidrawExporter().export(graph, GlobalConfig(), str(output_path))
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+
+        shapes = {
+            element["customData"]["node_id"]: element
+            for element in data["elements"]
+            if element["type"] in {"rectangle", "ellipse", "diamond"}
+        }
+
+        self.assertEqual(
+            shapes["jump"]["link"],
+            f"https://excalidraw.com/topic?element={shapes['topic']['id']}",
         )
 
     def test_full_refresh_rebuilds_tree_layout_but_keeps_saved_sizes(self):
