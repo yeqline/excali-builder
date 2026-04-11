@@ -7,7 +7,7 @@ This guide explains how to use the Markdown parser to create Excalidraw diagrams
 The Markdown parser reads one or more `.md` files in a folder and converts them into Excalidraw diagrams. The parser follows a convention where:
 
 - **Headings with anchors** become nodes (e.g., `## Topic {#my-topic}`)
-- **Heading hierarchy** creates parent-child relationships (H2 → H3 → H4)
+- **Heading hierarchy** creates structural parent-child relationships (H2 → H3 → H4)
 - **Meta blocks** define node type and tags
 - **Edges blocks** declare explicit relationships (prereqs, related, contrasts)
 - **Inline links** create implicit related edges
@@ -31,13 +31,13 @@ your-diagram/
 ## Mental Model
 
 - A **node** is a box in the diagram. In Markdown, a node comes from a heading with an anchor such as `## Topic {#topic}`. The heading text becomes the node title, and the body under that heading becomes the node text.
-- An **edge** is a relationship between two nodes. In Markdown, some edges are created by you in `edges` blocks such as `prereqs` or `related`, and one edge type (`parent_child`) is created automatically by the builder from heading nesting.
+- An **edge** is a relationship between two nodes. In Markdown, some edges are created by you in `edges` blocks such as `prereqs` or `related`, and one structural relationship is created automatically by the builder from heading nesting.
 - **Node types are user-defined labels** such as `category`, `concept`, `detail`, or `principle`. You assign them in the `[!meta]` block with `> type: ...`, and `node_config.json` looks up how that type should look. These names are not built into the builder. If you omit `type`, Markdown defaults to `concept`.
-- **Edge types are also user-defined names** such as `prereqs`, `related`, and `contrasts`. You define their meaning in `edge_config.json`. The builder only reserves one special edge type in Markdown: `parent_child`, which it creates automatically from heading hierarchy.
-- **Markdown also has one built-in special node type: `link`.** A link node represents a single navigation target. Its target is stored in `> target: ...`, and it can point either to an external URL or to another node with `#node-id`. this node has a default `link` edge associated with it. Right now both (link node and link edge) have built-in defaults so the minimum Markdown works without adding them to edge and node config. You only need to add them if you want to override the defaults styling.
+- **Edge types are also user-defined names** such as `prereqs`, `related`, and `contrasts`. You define their meaning in `edge_config.json`. Markdown also has built-in hierarchy-related edge types such as `parent_child`, `link`, and `comment` that can be inferred from heading nesting.
+- **Markdown has two built-in special node types: `link` and `comment`.** A `link` node represents a navigation target. A `comment` node is an annotation/aside that still participates in the tree layout. Both have built-in node and edge defaults, so the minimum Markdown works without adding them to config. You only need to add them if you want to override the defaults styling.
 - **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
-- **Layout is built into the builder design.** Fresh builds always use the same tree layout. The hierarchy for that tree comes from `parent_child` edges, not from `connection_type`.
-- **`parent_child` is the one structural edge type in Markdown.** It is auto-generated from heading nesting and always defines the tree layout, whether you render it as a line or as a container group.
+- **Layout is built into the builder design.** Fresh builds always use the same tree layout. In Markdown, the layout follows heading hierarchy even when a nested built-in node renders with a different edge type such as `comment` or `link`.
+- **`parent_child` is the normal inferred hierarchy edge type in Markdown.** It comes from heading nesting and defines the default rendered hierarchy edge, but built-in child node types can swap that rendered edge type without changing tree placement.
 - **`edge_config.json` is mostly rendering.** It answers: should this edge draw an arrow, or should it behave like a visual group? For line-like edges, it also controls color, thickness, stroke style, and arrowheads.
 - **`connection_type` is part of the builder design, not a user-invented concept.** Every edge type resolves to one of two built-in rendering modes:
   - `line`: draw a visible line or arrow between nodes
@@ -98,6 +98,11 @@ Right under the heading, add a blockquote with `[!meta]` to define node type and
   - `https://...` opens an external URL
   - `#node-id` jumps to another node in the same Excalidraw canvas
 - `tags`: Comma-separated list of tags (stored in metadata, can be used for filtering)
+
+Built-in node types:
+
+- `link`: clickable node with a required `target`
+- `comment`: annotation node; when nested, it keeps child placement but uses the built-in `comment` edge style
 
 **Example:**
 
@@ -169,6 +174,8 @@ This creates:
 - `parent` → `child-b` (parent_child edge)
 - `child-b` → `grandchild` (parent_child edge)
 
+If a nested node is `type: comment`, it still participates in the same hierarchy and layout, but its inferred edge renders as `comment` instead of `parent_child`.
+
 ### Built-in Link Nodes
 
 Use `type: link` when you want a node to be clickable rather than explanatory.
@@ -199,6 +206,27 @@ Rules:
   - anything else → external URL/string link
 - If a nested `link` node does not declare an explicit `link:` edge, the builder automatically creates a built-in `link` edge from its parent to the link node.
 - If you do declare explicit `link:` edges in an `edges` block, those explicit edges are used instead of the default parent link edge.
+
+### Built-in Comment Nodes
+
+Use `type: comment` when you want a child node to behave like an annotation while still staying in the tree layout.
+
+```markdown
+### Review Pane Is Git {#review-pane-mirrors-git}
+
+#### Comment: Includes your own changes too {#review-pane-note}
+
+> [!meta]
+> type: comment
+
+The review pane reflects the whole repo state, not just Codex edits.
+```
+
+Rules:
+
+- A nested `comment` node is still a structural child for layout.
+- Its inferred parent edge uses the built-in `comment` edge style instead of `parent_child`.
+- You can override the node or edge visuals by adding `comment` to `node_config.json` or `edge_config.json`.
 
 ### YAML Front Matter (Optional)
 
@@ -324,6 +352,7 @@ Defines styling and behavior for different edge types.
 **Edge Types from Markdown:**
 
 - `parent_child`: Auto-generated from heading hierarchy
+- `comment`: Built-in edge type used by nested `comment` nodes
 - `link`: Built-in edge type used by `link` nodes
 - `prereqs`: From edges block (directed dependency)
 - `related`: From edges block or inline links (association)
@@ -331,9 +360,10 @@ Defines styling and behavior for different edge types.
 
 **Important:**
 
-- `parent_child` always defines the tree layout in Markdown.
+- Heading hierarchy always defines the tree layout in Markdown.
 - Set `parent_child.connection_type` to `"line"` if you want visible hierarchy arrows.
 - Set `parent_child.connection_type` to `"container"` if you want the same layout without arrows, plus Excalidraw grouping.
+- `comment` nodes are Markdown-only and use the built-in `comment` edge style by default when nested.
 - `link` nodes are Markdown-only and use the built-in `link` edge style by default.
 
 **Line Styling Options:**
@@ -526,6 +556,23 @@ Core notes about reading Snowflake query performance.
 
 This creates a clickable link node. Because it is nested under `query-profiling`, the builder automatically adds the built-in `link` edge if you do not explicitly define one.
 
+### Example 4: Nested Comment Node
+
+```markdown
+## Review Pane {#review-pane}
+
+The review pane shows the repo state.
+
+### Note About Mixed Diffs {#review-pane-note}
+
+> [!meta]
+> type: comment
+
+This can include your own local edits, not only Codex edits.
+```
+
+This creates a normal child in the tree layout, but its inferred edge to `review-pane` uses the built-in `comment` style instead of `parent_child`.
+
 **edge_config.json:**
 
 ```json
@@ -551,7 +598,7 @@ This creates a clickable link node. Because it is nested under `query-profiling`
 
 This creates a directed learning path: `fundamentals` → `intermediate` → `advanced`, with a related link back from `advanced` to `fundamentals`.
 
-### Example 3: Contrasting Concepts
+### Example 5: Contrasting Concepts
 
 ````markdown
 ## SQL Databases {#sql-db}

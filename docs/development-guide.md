@@ -88,8 +88,8 @@ excali_builder/
 3. Register in `builder.py`'s `__init__`
 4. Add to `parsers/__init__.py` exports
 
-**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. The special `parent_child` edge type defines structural hierarchy for layout.
-Markdown also supports a built-in `link` node type with a required `target` meta field. Nested link nodes receive a default `link` edge to their parent unless the author explicitly declares `link:` edges.
+**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. In Markdown, heading hierarchy is also stored on nodes as `hierarchy_parent_id`, so built-in child node types can render with a different inferred edge type without changing layout.
+Markdown also supports built-in `link` and `comment` node types. Nested `link` nodes receive a default `link` edge to their parent unless the author explicitly declares `link:` edges. Nested `comment` nodes receive a default `comment` edge to their parent.
 
 #### `config/` - Configuration
 
@@ -103,7 +103,7 @@ Markdown also supports a built-in `link` node type with a required `target` meta
 - `node_config.json`: Styling per node type
 - `edge_config.json`: Styling and connection_type per edge type
 
-**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. Layout does not depend on `connection_type`; it follows `parent_child` edges only.
+**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. Layout does not depend on `connection_type`; Markdown layout follows heading hierarchy, and CSV layout follows `parent_child` edges.
 
 #### `layout/` - Positioning
 
@@ -112,7 +112,7 @@ Markdown also supports a built-in `link` node type with a required `target` meta
 | `base.py` | Abstract `BaseLayout` interface |
 | `tree.py` | Tree layout algorithm |
 
-**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement always uses the tree layout and follows `parent_child` edges.
+**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement always uses the tree layout and follows the structural hierarchy from the parser.
 
 #### `excalidraw/` - Excalidraw Integration
 

@@ -20,6 +20,11 @@ EDGE_LINE_PATTERN = re.compile(r'^(\w+):\s*(.+)$')
 INLINE_LINK_PATTERN = re.compile(r'\[[^\]]+\]\(#([\w-]+)\)')
 YAML_FRONT_MATTER_START = re.compile(r'^---\s*$')
 
+BUILTIN_CHILD_EDGE_TYPES = {
+    "comment": "comment",
+    "link": "link",
+}
+
 
 class MarkdownParser(BaseParser):
     """Parser for Markdown-based graph data with heading anchors.
@@ -30,6 +35,7 @@ class MarkdownParser(BaseParser):
     - Edges: ```edges code fence with prereqs/related/contrasts
     - Inline links: [text](#id) become related edges
     - Parent-child: Inferred from heading hierarchy
+    - Built-in child node types can swap the rendered hierarchy edge type
     """
 
     def parse(self, path: Path, options: Dict[str, Any]) -> Graph:
@@ -213,12 +219,8 @@ class MarkdownParser(BaseParser):
         ):
             return
 
-        if node.type == "link" and not node.metadata.get("has_explicit_link_edge"):
-            connection_type_str = ConfigLoader.get_connection_type(config, "link")
-            edge_type = "link"
-        else:
-            connection_type_str = ConfigLoader.get_connection_type(config, "parent_child")
-            edge_type = "parent_child"
+        edge_type = self._get_default_hierarchy_edge_type(node)
+        connection_type_str = ConfigLoader.get_connection_type(config, edge_type)
 
         connection_type = (
             ConnectionType.CONTAINER
@@ -241,6 +243,12 @@ class MarkdownParser(BaseParser):
         if content:
             node.metadata["text"] = content
 
+    def _get_default_hierarchy_edge_type(self, node: Node) -> str:
+        """Return the built-in edge type used for inferred heading hierarchy."""
+        if node.type == "link" and node.metadata.get("has_explicit_link_edge"):
+            return "parent_child"
+        return BUILTIN_CHILD_EDGE_TYPES.get(node.type, "parent_child")
+
     def _apply_meta(self, node: Node, key: str, value: str) -> None:
         """Apply a meta field to a node."""
         if key == "type":
@@ -257,6 +265,7 @@ class MarkdownParser(BaseParser):
         """Parse edges from an edges block."""
         # Map markdown edge types to excali-builder edge types
         edge_type_map = {
+            'comment': 'comment',
             'prereqs': 'prereqs',
             'related': 'related',
             'contrasts': 'contrasts',

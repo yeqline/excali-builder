@@ -49,6 +49,15 @@ class ConfigLoader:
         """Get node configuration for a type, with defaults."""
         if node_type in config.node_types:
             return config.node_types[node_type]
+        if node_type == "comment":
+            return NodeTypeConfig(
+                color="#57534E",
+                backgroundColor="#FAF7F2",
+                shape="rectangle",
+                font_size=13,
+                padding=10,
+                borderRadius=12,
+            )
         if node_type == "link":
             return NodeTypeConfig(
                 color="#1D4ED8",
@@ -85,6 +94,15 @@ class ConfigLoader:
                 stroke_style=edge_config.stroke_style or "solid",
                 arrow_start=edge_config.arrow_start,
                 arrow_end=edge_config.arrow_end,
+            )
+        if edge_type == "comment":
+            return LineConnectionConfig(
+                connection_type="line",
+                color="#78716C",
+                stroke_width=2,
+                stroke_style="dashed",
+                arrow_start=None,
+                arrow_end=None,
             )
         if edge_type == "link":
             return LineConnectionConfig(

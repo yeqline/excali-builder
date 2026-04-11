@@ -59,6 +59,8 @@ This automatically creates:
 
 **Important**: The parent is determined by the nearest preceding heading with a LOWER level number (fewer `#`). If you write two `##` headings in sequence, the second one is NOT a child of the first — they are siblings.
 
+**Special case**: If a nested node uses `> type: comment`, it still stays in the same hierarchy and layout, but the inferred edge to its parent uses the built-in `comment` style instead of `parent_child`.
+
 ### Meta Block (Optional, immediately after heading)
 
 To set the node type or tags, add a `[!meta]` blockquote immediately after the heading:
@@ -85,6 +87,7 @@ To set the node type or tags, add a `[!meta]` blockquote immediately after the h
   - `category` — High-level grouping/category node
   - `detail` — Specific detail, technique, or example
   - `principle` — Foundational principle or rule
+  - `comment` — Annotation/comment node with built-in comment edge behavior when nested
 - `tags`: Comma-separated list of tags for filtering/categorization.
 
 ### Edges Block (Optional, after meta block)
@@ -288,6 +291,23 @@ or:
 ```
 
 If a nested link node does not declare an explicit `link:` edge, the builder automatically adds the built-in `link` edge to its parent.
+
+### Built-in comment nodes
+
+Use `type: comment` when you want a note/annotation that should still sit in the tree under the node it comments on:
+
+```markdown
+### Review Pane Is Git {#review-pane-mirrors-git}
+
+#### Comment: Whole repo state {#review-pane-whole-repo-note}
+
+> [!meta]
+> type: comment
+
+The pane can include your own unstaged changes too.
+```
+
+If a nested comment node does not declare anything special, the builder automatically adds the built-in `comment` edge to its parent while keeping the normal child placement in the tree.
 
 ---
 

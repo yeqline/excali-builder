@@ -13,6 +13,40 @@ from excali_builder.parsers.markdown import MarkdownParser
 
 
 class LayoutRegressionTests(unittest.TestCase):
+    def test_markdown_comment_node_gets_default_comment_edge_to_parent(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "doc.md").write_text(
+                "\n".join(
+                    [
+                        "## Topic {#topic}",
+                        "",
+                        "### Reviewer Note {#reviewer-note}",
+                        "",
+                        "> [!meta]",
+                        "> type: comment",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            graph = MarkdownParser().parse(folder, {})
+
+        self.assertEqual(len(graph.edges), 1)
+        self.assertEqual(graph.edges[0].edge_type, "comment")
+        self.assertEqual(
+            (graph.edges[0].source_id, graph.edges[0].target_id),
+            ("topic", "reviewer-note"),
+        )
+        self.assertEqual(
+            [node.id for node in graph.get_hierarchy_children("topic")],
+            ["reviewer-note"],
+        )
+
     def test_markdown_link_node_gets_default_link_edge_to_parent(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             folder = Path(tmp_dir)
@@ -233,6 +267,162 @@ class LayoutRegressionTests(unittest.TestCase):
         )
         self.assertEqual(text_element["y"], shape["y"] + 5)
 
+    def test_sync_preserves_resized_bound_text_wrap_on_rebuild(self):
+        full_text = (
+            "Git Review Model\n"
+            "The app's review experience is a Git workflow, not a pre-edit approval workflow."
+        )
+        wrapped_text = (
+            "Git Review Model\n"
+            "The app's review experience is a\n"
+            "Git workflow, not a pre-edit\n"
+            "approval workflow."
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "diagram.md").write_text(
+                "\n".join(
+                    [
+                        "## Git Review Model {#git-review-model}",
+                        "",
+                        "The app's review experience is a Git workflow, not a pre-edit approval workflow.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (folder / "output.excalidraw").write_text(
+                json.dumps(
+                    {
+                        "type": "excalidraw",
+                        "version": 2,
+                        "source": "test",
+                        "elements": [
+                            {
+                                "id": "shape",
+                                "type": "rectangle",
+                                "x": 50,
+                                "y": 60,
+                                "width": 300,
+                                "height": 80,
+                                "customData": {"node_id": "git-review-model"},
+                            },
+                            {
+                                "id": "text",
+                                "type": "text",
+                                "x": 70,
+                                "y": 65,
+                                "width": 260,
+                                "height": 60,
+                                "text": wrapped_text,
+                                "originalText": full_text,
+                                "textAlign": "center",
+                                "verticalAlign": "top",
+                                "customData": {"node_id": "git-review-model"},
+                            },
+                        ],
+                        "appState": {},
+                        "files": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            builder = ExcaliBuilder()
+            builder.sync_from_folder(str(folder))
+
+            positions = json.loads((folder / "positions.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                positions["git-review-model"]["wrapped_text"],
+                wrapped_text,
+            )
+            self.assertEqual(
+                positions["git-review-model"]["wrapped_original_text"],
+                full_text,
+            )
+
+            output_path = builder.build_from_folder(str(folder))
+            data = json.loads(Path(output_path).read_text(encoding="utf-8"))
+
+        text_element = next(
+            element
+            for element in data["elements"]
+            if element["type"] == "text"
+            and element["customData"]["node_id"] == "git-review-model"
+        )
+        shape_element = next(
+            element
+            for element in data["elements"]
+            if element["type"] == "rectangle"
+            and element["customData"]["node_id"] == "git-review-model"
+        )
+
+        self.assertEqual(text_element["text"], wrapped_text)
+        self.assertEqual(text_element["originalText"], full_text)
+        self.assertEqual((shape_element["width"], shape_element["height"]), (300, 80))
+
+    def test_build_recomputes_text_layout_when_source_text_changes(self):
+        stale_wrapped_text = "Title\nOld body text"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "md"}),
+                encoding="utf-8",
+            )
+            (folder / "diagram.md").write_text(
+                "\n".join(
+                    [
+                        "## Title {#title}",
+                        "",
+                        "Updated body text that should wrap differently once the source changes.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (folder / "positions.json").write_text(
+                json.dumps(
+                    {
+                        "title": {
+                            "x": 50,
+                            "y": 60,
+                            "width": 220,
+                            "height": 80,
+                            "text_x": 999,
+                            "text_y": 999,
+                            "text_width": 1,
+                            "text_height": 1,
+                            "wrapped_text": stale_wrapped_text,
+                            "wrapped_original_text": "Title\nOld body text",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_path = ExcaliBuilder().build_from_folder(str(folder))
+            data = json.loads(Path(output_path).read_text(encoding="utf-8"))
+
+        text_element = next(
+            element
+            for element in data["elements"]
+            if element["type"] == "text" and element["customData"]["node_id"] == "title"
+        )
+
+        self.assertNotEqual(text_element["text"], stale_wrapped_text)
+        self.assertEqual(
+            text_element["originalText"],
+            "Title\nUpdated body text that should wrap differently once the source changes.",
+        )
+        self.assertNotEqual(text_element["x"], 999)
+        self.assertNotEqual(text_element["y"], 999)
+        self.assertNotEqual(text_element["width"], 1)
+        self.assertNotEqual(text_element["height"], 1)
+
     def test_parent_child_line_edges_render_as_arrows(self):
         graph = Graph()
         root = Node(id="root", label="Root", x=100, y=100, width=120, height=60)
@@ -265,6 +455,48 @@ class LayoutRegressionTests(unittest.TestCase):
 
         arrows = [element for element in data["elements"] if element["type"] == "arrow"]
         self.assertEqual(len(arrows), 1)
+
+    def test_comment_edges_use_built_in_annotation_style(self):
+        graph = Graph()
+        root = Node(id="root", label="Root", x=100, y=100, width=120, height=60)
+        note = Node(
+            id="note",
+            label="Reviewer Note",
+            type="comment",
+            x=320,
+            y=100,
+            width=160,
+            height=70,
+        )
+        graph.add_node(root)
+        graph.add_node(note)
+        graph.add_edge(
+            Edge(
+                source_id="root",
+                target_id="note",
+                connection_type=ConnectionType.LINE,
+                edge_type="comment",
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "output.excalidraw"
+            ExcalidrawExporter().export(graph, GlobalConfig(), str(output_path))
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+
+        shape = next(
+            element
+            for element in data["elements"]
+            if element["type"] == "rectangle"
+            and element["customData"]["node_id"] == "note"
+        )
+        arrow = next(element for element in data["elements"] if element["type"] == "arrow")
+
+        self.assertEqual(shape["strokeColor"], "#57534E")
+        self.assertEqual(shape["backgroundColor"], "#FAF7F2")
+        self.assertEqual(arrow["strokeColor"], "#78716C")
+        self.assertEqual(arrow["strokeStyle"], "dashed")
+        self.assertIsNone(arrow["endArrowhead"])
 
     def test_link_node_exports_external_and_internal_links(self):
         graph = Graph()

@@ -73,7 +73,23 @@ class ExcalidrawExporter:
             measured_width, measured_height = self.measure_node(node, node_config)
             width = node.width or measured_width
             height = node.height or measured_height
-            display_text = self._wrap_text_to_width(original_text, node_config, width)
+            saved_wrapped_text = (
+                node.metadata.get("saved_wrapped_text") if node.metadata else None
+            )
+            saved_wrapped_original_text = (
+                node.metadata.get("saved_wrapped_original_text")
+                if node.metadata
+                else None
+            )
+            should_reuse_saved_wrap = (
+                isinstance(saved_wrapped_text, str)
+                and saved_wrapped_original_text == original_text
+            )
+            display_text = (
+                saved_wrapped_text
+                if should_reuse_saved_wrap
+                else self._wrap_text_to_width(original_text, node_config, width)
+            )
 
             x = node.x or 0
             y = node.y or 0
@@ -105,10 +121,26 @@ class ExcalidrawExporter:
             # Get saved text alignment and geometry from node metadata if available
             saved_text_align = node.metadata.get("text_align") if node.metadata else None
             saved_vertical_align = node.metadata.get("vertical_align") if node.metadata else None
-            saved_text_x = node.metadata.get("text_x") if node.metadata else None
-            saved_text_y = node.metadata.get("text_y") if node.metadata else None
-            saved_text_width = node.metadata.get("text_width") if node.metadata else None
-            saved_text_height = node.metadata.get("text_height") if node.metadata else None
+            saved_text_x = (
+                node.metadata.get("text_x")
+                if node.metadata and should_reuse_saved_wrap
+                else None
+            )
+            saved_text_y = (
+                node.metadata.get("text_y")
+                if node.metadata and should_reuse_saved_wrap
+                else None
+            )
+            saved_text_width = (
+                node.metadata.get("text_width")
+                if node.metadata and should_reuse_saved_wrap
+                else None
+            )
+            saved_text_height = (
+                node.metadata.get("text_height")
+                if node.metadata and should_reuse_saved_wrap
+                else None
+            )
             text_element = self._create_text(
                 x, y, width, height, display_text, node_config, element_id,
                 text_align=saved_text_align, vertical_align=saved_vertical_align,
