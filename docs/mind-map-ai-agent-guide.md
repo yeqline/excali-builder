@@ -307,10 +307,10 @@ If a nested comment node does not declare anything special, the builder automati
 ### Structure
 
 1. **Start with a root overview node** (H2) that names the subject. Give it `type: category`.
-2. **Break the subject into 4-8 major areas** as H2 siblings or H3 children of the root. These are `type: category`.
-3. **Each major area has 2-6 key concepts** as H3 children. These are `type: concept`.
-4. **Concepts may have details** as H4 children. These are `type: detail` or `type: principle`.
-5. **Don't go deeper than H4** unless truly necessary. Flat is better than deep.
+2. **Let the subject determine the shape** of the map. Some branches may be shallow, while others may need several nested levels.
+3. **Use uneven branch sizes naturally.** Major areas do not need the same number of children; give each area the nodes it needs.
+4. **Add deeper detail when it improves understanding.** Use H4, H5, or H6 children for examples, mechanisms, steps, tradeoffs, or implementation details when the subject calls for them.
+5. **Prefer meaningful decomposition over artificial balance.** A good map should reflect the real structure of the topic, not a fixed template.
 
 ### Relationships
 
@@ -327,9 +327,9 @@ If a nested comment node does not declare anything special, the builder automati
 
 ### Scope
 
-- Aim for **20-60 nodes** total for a good mind map. Fewer than 15 is too sparse. More than 80 becomes hard to read.
-- Each node should represent one distinct concept. Don't combine two ideas into one node.
-- The body text should be 1-2 sentences maximum — this is a mind map, not a textbook.
+- Let the node count follow the subject and purpose of the map. Small topics may need only a few nodes; complex topics may need many more.
+- Each node should represent one distinct concept. Don't combine two ideas into one node just to keep the map small.
+- The body text should usually be concise, but add enough detail for the node to be useful.
 
 ---
 
@@ -505,7 +505,7 @@ Before you output your files, verify:
 - [ ] Explicit relationships use `> edge.<type>: target-id` syntax
 - [ ] No duplicate edges (same source → target with same type)
 - [ ] Node types match keys in `node_config.json`
-- [ ] Total node count is 20-60 for readability
+- [ ] Node count, branch depth, and child counts fit the subject rather than a fixed template
 - [ ] All three config files are included
 
 ---
