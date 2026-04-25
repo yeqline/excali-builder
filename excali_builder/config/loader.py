@@ -2,8 +2,9 @@
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
+from ..core.edge import ConnectionType
 from .schema import (
     EdgeTypeConfig,
     GlobalConfig,
@@ -15,6 +16,113 @@ from .schema import (
 
 class ConfigLoader:
     """Loads and validates configuration from JSON files."""
+
+    DEFAULT_NODE_TEMPLATE = {
+        "color": "#000000",
+        "backgroundColor": "#ffffff",
+        "shape": "rectangle",
+        "font_size": 14,
+        "font_family": "Arial",
+        "padding": 10,
+        "borderRadius": 0,
+    }
+    NODE_TYPE_TEMPLATES = {
+        "comment": {
+            "color": "#57534E",
+            "backgroundColor": "#FAF7F2",
+            "shape": "rectangle",
+            "font_size": 13,
+            "font_family": "Arial",
+            "padding": 10,
+            "borderRadius": 12,
+        },
+        "image": {
+            "color": "#475569",
+            "backgroundColor": "#F8FAFC",
+            "shape": "rectangle",
+            "font_size": 13,
+            "font_family": "Arial",
+            "padding": 8,
+            "borderRadius": 12,
+        },
+        "link": {
+            "color": "#1D4ED8",
+            "backgroundColor": "#DBEAFE",
+            "shape": "rectangle",
+            "font_size": 13,
+            "font_family": "Arial",
+            "padding": 10,
+            "borderRadius": 12,
+        },
+        "procedure": {
+            "color": "#92400E",
+            "backgroundColor": "#FEF3C7",
+            "shape": "rectangle",
+            "font_size": 14,
+            "font_family": "Arial",
+            "padding": 12,
+            "borderRadius": 16,
+        },
+        "step": {
+            "color": "#1F2937",
+            "backgroundColor": "#F9FAFB",
+            "shape": "rectangle",
+            "font_size": 13,
+            "font_family": "Arial",
+            "padding": 10,
+            "borderRadius": 12,
+        },
+    }
+    DEFAULT_EDGE_TEMPLATE = {
+        "connection_type": "line",
+        "color": "#000000",
+        "stroke_width": 2,
+        "stroke_style": "solid",
+        "arrow_start": None,
+        "arrow_end": None,
+    }
+    EDGE_TYPE_TEMPLATES = {
+        "attachment": {
+            "connection_type": "container",
+            "color": "#6B7280",
+            "stroke_width": 2,
+            "stroke_style": "dashed",
+            "arrow_start": None,
+            "arrow_end": None,
+        },
+        "comment": {
+            "connection_type": "line",
+            "color": "#78716C",
+            "stroke_width": 2,
+            "stroke_style": "dashed",
+            "arrow_start": None,
+            "arrow_end": None,
+        },
+        "link": {
+            "connection_type": "line",
+            "color": "#2563EB",
+            "stroke_width": 2,
+            "stroke_style": "dashed",
+            "arrow_start": None,
+            "arrow_end": None,
+        },
+        "next": {
+            "connection_type": "line",
+            "color": "#2563EB",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "arrow_start": None,
+            "arrow_end": "arrow",
+        },
+        "procedure_step": {
+            "connection_type": "container",
+            "color": "#2563EB",
+            "stroke_width": 2,
+            "stroke_style": "solid",
+            "arrow_start": None,
+            "arrow_end": "arrow",
+        },
+    }
 
     @staticmethod
     def load_from_folder(folder_path: Path) -> GlobalConfig:
@@ -45,29 +153,70 @@ class ConfigLoader:
         return config
 
     @staticmethod
+    def ensure_graph_config(folder_path: Path, graph) -> Dict[str, Any]:
+        """Ensure every used node and edge type exists explicitly in config files."""
+        node_config_path = folder_path / "node_config.json"
+        edge_config_path = folder_path / "edge_config.json"
+
+        node_config_data = ConfigLoader._load_json_dict(node_config_path)
+        edge_config_data = ConfigLoader._load_json_dict(edge_config_path)
+
+        report = {
+            "added_node_types": [],
+            "completed_node_types": [],
+            "added_edge_types": [],
+            "completed_edge_types": [],
+        }
+
+        node_changed = False
+        for node_type in sorted({node.type for node in graph.nodes.values()}):
+            template = ConfigLoader._get_node_type_template(node_type)
+            merged, was_added, had_missing_fields = ConfigLoader._merge_template(
+                node_config_data.get(node_type),
+                template,
+            )
+            if was_added:
+                report["added_node_types"].append(node_type)
+                node_changed = True
+            elif had_missing_fields:
+                report["completed_node_types"].append(node_type)
+                node_changed = True
+            node_config_data[node_type] = merged
+
+        edge_changed = False
+        for edge_type in sorted({edge.edge_type for edge in graph.edges}):
+            template = ConfigLoader._get_edge_type_template(edge_type)
+            merged, was_added, had_missing_fields = ConfigLoader._merge_template(
+                edge_config_data.get(edge_type),
+                template,
+            )
+            if was_added:
+                report["added_edge_types"].append(edge_type)
+                edge_changed = True
+            elif had_missing_fields:
+                report["completed_edge_types"].append(edge_type)
+                edge_changed = True
+            edge_config_data[edge_type] = merged
+
+        if node_changed:
+            ConfigLoader._write_json_dict(node_config_path, node_config_data)
+        if edge_changed:
+            ConfigLoader._write_json_dict(edge_config_path, edge_config_data)
+
+        return report
+
+    @staticmethod
+    def apply_config_to_graph(graph, config: GlobalConfig) -> None:
+        """Resolve edge connection types from explicit config entries."""
+        for edge in graph.edges:
+            edge.connection_type = ConfigLoader.get_connection_type(config, edge.edge_type)
+
+    @staticmethod
     def get_node_config(config: GlobalConfig, node_type: str) -> NodeTypeConfig:
-        """Get node configuration for a type, with defaults."""
-        if node_type in config.node_types:
-            return config.node_types[node_type]
-        if node_type == "comment":
-            return NodeTypeConfig(
-                color="#57534E",
-                backgroundColor="#FAF7F2",
-                shape="rectangle",
-                font_size=13,
-                padding=10,
-                borderRadius=12,
-            )
-        if node_type == "link":
-            return NodeTypeConfig(
-                color="#1D4ED8",
-                backgroundColor="#DBEAFE",
-                shape="rectangle",
-                font_size=13,
-                padding=10,
-                borderRadius=12,
-            )
-        return NodeTypeConfig()
+        """Get node configuration for a type."""
+        if node_type not in config.node_types:
+            raise ValueError(f"Missing node config for type '{node_type}'")
+        return config.node_types[node_type]
 
     @staticmethod
     def get_edge_type_config(config: GlobalConfig, edge_type: str) -> Optional[EdgeTypeConfig]:
@@ -75,42 +224,81 @@ class ConfigLoader:
         return config.edge_types.get(edge_type)
 
     @staticmethod
-    def get_connection_type(config: GlobalConfig, edge_type: str) -> str:
+    def get_connection_type(config: GlobalConfig, edge_type: str) -> ConnectionType:
         """Get connection type (container or line) for an edge type."""
         edge_config = config.edge_types.get(edge_type)
-        if edge_config:
-            return edge_config.connection_type
-        return "line"
+        if not edge_config:
+            raise ValueError(f"Missing edge config for type '{edge_type}'")
+        if edge_config.connection_type == "container":
+            return ConnectionType.CONTAINER
+        return ConnectionType.LINE
 
     @staticmethod
     def get_line_config(config: GlobalConfig, edge_type: str) -> LineConnectionConfig:
-        """Get line connection configuration for an edge type, with defaults."""
+        """Get line connection configuration for an edge type."""
         edge_config = config.edge_types.get(edge_type)
-        if edge_config and edge_config.connection_type == "line":
-            return LineConnectionConfig(
-                connection_type="line",
-                color=edge_config.color or "#000000",
-                stroke_width=edge_config.stroke_width or 2,
-                stroke_style=edge_config.stroke_style or "solid",
-                arrow_start=edge_config.arrow_start,
-                arrow_end=edge_config.arrow_end,
+        if not edge_config:
+            raise ValueError(f"Missing edge config for type '{edge_type}'")
+        if edge_config.connection_type != "line":
+            raise ValueError(
+                f"Edge type '{edge_type}' is configured as '{edge_config.connection_type}', not 'line'"
             )
-        if edge_type == "comment":
-            return LineConnectionConfig(
-                connection_type="line",
-                color="#78716C",
-                stroke_width=2,
-                stroke_style="dashed",
-                arrow_start=None,
-                arrow_end=None,
-            )
-        if edge_type == "link":
-            return LineConnectionConfig(
-                connection_type="line",
-                color="#2563EB",
-                stroke_width=2,
-                stroke_style="dashed",
-                arrow_start=None,
-                arrow_end=None,
-            )
-        return LineConnectionConfig()
+        return LineConnectionConfig(
+            connection_type="line",
+            color=edge_config.color,
+            stroke_width=edge_config.stroke_width,
+            stroke_style=edge_config.stroke_style,
+            arrow_start=edge_config.arrow_start,
+            arrow_end=edge_config.arrow_end,
+        )
+
+    @staticmethod
+    def _get_node_type_template(node_type: str) -> Dict[str, Any]:
+        """Return the explicit config template for a node type."""
+        template = ConfigLoader.NODE_TYPE_TEMPLATES.get(
+            node_type,
+            ConfigLoader.DEFAULT_NODE_TEMPLATE,
+        )
+        return dict(template)
+
+    @staticmethod
+    def _get_edge_type_template(edge_type: str) -> Dict[str, Any]:
+        """Return the explicit config template for an edge type."""
+        template = ConfigLoader.EDGE_TYPE_TEMPLATES.get(
+            edge_type,
+            ConfigLoader.DEFAULT_EDGE_TEMPLATE,
+        )
+        return dict(template)
+
+    @staticmethod
+    def _load_json_dict(path: Path) -> Dict[str, Any]:
+        """Load a JSON object from disk, or return an empty dict if missing."""
+        if not path.exists():
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _write_json_dict(path: Path, data: Dict[str, Any]) -> None:
+        """Write a JSON object with stable indentation."""
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+
+    @staticmethod
+    def _merge_template(
+        existing: Optional[Dict[str, Any]],
+        template: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], bool, bool]:
+        """Merge a template into an existing config entry."""
+        if existing is None:
+            return dict(template), True, False
+
+        merged = dict(existing)
+        had_missing_fields = False
+        for key, value in template.items():
+            if key not in merged:
+                merged[key] = value
+                had_missing_fields = True
+        return merged, False, had_missing_fields

@@ -3,11 +3,13 @@
 import hashlib
 import json
 import textwrap
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from ..core.graph import Graph
 from ..core.edge import ConnectionType
 from ..config.schema import GlobalConfig, NodeTypeConfig, LineConnectionConfig
 from ..config.loader import ConfigLoader
+from ..image_assets import build_data_url, get_image_mime_type
 
 
 class ExcalidrawExporter:
@@ -15,6 +17,8 @@ class ExcalidrawExporter:
 
     MAX_INITIAL_NODE_WIDTH = 420
     MAX_INITIAL_NODE_HEIGHT = 220
+    MAX_INITIAL_IMAGE_WIDTH = 480
+    MAX_INITIAL_IMAGE_HEIGHT = 320
     BOUND_TEXT_VERTICAL_PADDING = 5
     FONT_FAMILY_MAP = {
         "virgil": 1,
@@ -46,6 +50,9 @@ class ExcalidrawExporter:
 
     def measure_node(self, node, node_config: NodeTypeConfig) -> Tuple[float, float]:
         """Estimate the node size from the text that will be rendered."""
+        if self._is_image_node(node):
+            return self._measure_image_node(node)
+
         full_text = self.get_node_full_text(node)
         return (
             self._calculate_text_width(full_text, node_config),
@@ -57,6 +64,8 @@ class ExcalidrawExporter:
     ) -> None:
         """Export graph to Excalidraw JSON file."""
         elements: List[Dict[str, Any]] = []
+        files: Dict[str, Any] = {}
+        scene_folder = Path(output_path).parent
 
         # Export nodes as rectangles/ellipses with text labels
         node_element_map: Dict[str, str] = {}  # Maps node_id to element_id for binding
@@ -65,14 +74,34 @@ class ExcalidrawExporter:
         for node in graph.nodes.values():
             node_config = ConfigLoader.get_node_config(config, node.type)
             shape_element_id = self._get_shape_element_id(node.id)
-            text_element_id = self._get_text_element_id(node.id)
 
-            original_text = self.get_node_full_text(node)
-            
-            # Calculate default size if not set (accounting for multi-line text)
             measured_width, measured_height = self.measure_node(node, node_config)
             width = node.width or measured_width
             height = node.height or measured_height
+            x = node.x or 0
+            y = node.y or 0
+
+            if self._is_image_node(node):
+                file_id = self._get_image_file_id(node)
+                element = self._create_image(
+                    x,
+                    y,
+                    width,
+                    height,
+                    node,
+                    shape_element_id,
+                    file_id,
+                )
+                element["customData"] = {"node_id": node.id}
+                node_element_map[node.id] = element["id"]
+                element_index_map[element["id"]] = len(elements)
+                elements.append(element)
+                if file_id not in files:
+                    files[file_id] = self._create_image_file(node, file_id, scene_folder)
+                continue
+
+            text_element_id = self._get_text_element_id(node.id)
+            original_text = self.get_node_full_text(node)
             saved_wrapped_text = (
                 node.metadata.get("saved_wrapped_text") if node.metadata else None
             )
@@ -90,9 +119,6 @@ class ExcalidrawExporter:
                 if should_reuse_saved_wrap
                 else self._wrap_text_to_width(original_text, node_config, width)
             )
-
-            x = node.x or 0
-            y = node.y or 0
 
             # Create element based on shape
             if node_config.shape == "ellipse":
@@ -255,7 +281,7 @@ class ExcalidrawExporter:
                 "gridSize": None,
                 "viewBackgroundColor": "#ffffff",
             },
-            "files": {},
+            "files": files,
         }
 
         # Write to file
@@ -387,6 +413,49 @@ class ExcalidrawExporter:
             "link": None,
             "locked": False,
             "points": points,
+        }
+
+    def _create_image(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        node,
+        element_id: str,
+        file_id: str,
+    ) -> Dict[str, Any]:
+        """Create an Excalidraw image element."""
+        return {
+            "type": "image",
+            "version": 1,
+            "versionNonce": self._generate_nonce(),
+            "isDeleted": False,
+            "id": element_id,
+            "fillStyle": "solid",
+            "strokeWidth": 2,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "angle": 0,
+            "x": x,
+            "y": y,
+            "strokeColor": "transparent",
+            "backgroundColor": "transparent",
+            "width": width,
+            "height": height,
+            "seed": self._generate_seed(),
+            "groupIds": [],
+            "frameId": None,
+            "roundness": None,
+            "boundElements": [],
+            "updated": 1,
+            "link": None,
+            "locked": False,
+            "status": "saved",
+            "fileId": file_id,
+            "scale": [1, 1],
+            "crop": None,
         }
 
     def _create_text(
@@ -764,6 +833,54 @@ class ExcalidrawExporter:
 
         normalized = str(font_family or "").strip().lower()
         return self.FONT_FAMILY_MAP.get(normalized, 2)
+
+    def _is_image_node(self, node) -> bool:
+        """Return whether a node should be exported as an image element."""
+        return node.type == "image" and bool(node.metadata and node.metadata.get("src"))
+
+    def _measure_image_node(self, node) -> Tuple[float, float]:
+        """Estimate image node size from the source asset dimensions."""
+        natural_width = float((node.metadata or {}).get("natural_width") or 160)
+        natural_height = float((node.metadata or {}).get("natural_height") or 120)
+        if natural_width <= 0 or natural_height <= 0:
+            natural_width, natural_height = 160, 120
+
+        scale = min(
+            1.0,
+            self.MAX_INITIAL_IMAGE_WIDTH / natural_width,
+            self.MAX_INITIAL_IMAGE_HEIGHT / natural_height,
+        )
+        return natural_width * scale, natural_height * scale
+
+    def _create_image_file(
+        self,
+        node,
+        file_id: str,
+        scene_folder: Path,
+    ) -> Dict[str, Any]:
+        """Create the Excalidraw binary file entry for an image node."""
+        src = (node.metadata or {}).get("src")
+        if not src:
+            raise ValueError(f"Image node '{node.id}' is missing required metadata field 'src'")
+
+        image_path = (scene_folder / src).resolve()
+        if not image_path.exists():
+            raise ValueError(f"Image node '{node.id}' references missing source '{src}'")
+
+        mime_type = (node.metadata or {}).get("mime_type") or get_image_mime_type(image_path)
+        modified_ms = int(image_path.stat().st_mtime_ns // 1_000_000)
+        return {
+            "id": file_id,
+            "mimeType": mime_type,
+            "dataURL": build_data_url(image_path, mime_type),
+            "created": modified_ms,
+            "lastRetrieved": modified_ms,
+        }
+
+    def _get_image_file_id(self, node) -> str:
+        """Return a deterministic file ID for an image source."""
+        src = (node.metadata or {}).get("src") or node.id
+        return f"file-{self._stable_id_suffix(src)}"
 
     def _get_shape_element_id(self, node_id: str) -> str:
         """Return a deterministic shape element ID for a node."""

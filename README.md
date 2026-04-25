@@ -10,6 +10,9 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Simple initial layout**: Fresh builds always start from the same tree layout
 - **Two rendering modes for edges**: Hide hierarchy arrows with `container` or draw them with `line`
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
+- **Markdown image attachments**: Keep standard `![alt](path)` images in `.md` previews and render them as attached Excalidraw images
+- **Built-in procedures and ordered steps**: Model long step-by-step flows without abusing heading depth
+- **Configs become explicit**: When a build encounters a used node or edge type missing from config, it writes that type into the config file and then renders from config only
 
 ## Quick Start
 
@@ -77,13 +80,44 @@ Example Markdown:
 The review pane reflects the state of the repository.
 ```
 
+Ordered procedures can live alongside normal children:
+
+```markdown
+## Release Management {#release-management}
+
+### Monitoring {#monitoring}
+> type: concept
+
+### Deploy Service {#deploy-service}
+> type: procedure
+
+#### Check Secrets {#deploy-check-secrets}
+> type: step
+> edge.next: deploy-build-image
+
+#### Build Image {#deploy-build-image}
+> type: step
+```
+
+Markdown images can stay standard and still become attachments in Excalidraw:
+
+```markdown
+## Deployment Notes {#deployment-notes}
+
+The current flow uses this diagram ![Flow](media/flow.png) during rollouts.
+```
+
 ## Layout And Edges
+
+Used node and edge types are always made explicit in config files. If a build encounters a missing type such as `image`, `attachment`, `comment`, or `next`, it adds a starter entry to `node_config.json` or `edge_config.json` and then reloads config from disk before layout and export. That means the folder config becomes the visible source of truth for rendering.
 
 Initial layout is always a tree. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
 
 - In Markdown, normal nested nodes get an inferred `parent_child` edge from heading nesting.
 - Nested `type: link` nodes keep the same placement but use the built-in `link` edge style unless you declare explicit `link:` edges.
 - Nested `type: comment` nodes keep the same placement but use the built-in `comment` edge style.
+- Markdown images inside a node body become implicit `image` child nodes that use the built-in `attachment` edge style.
+- Nested `type: step` nodes under a `type: procedure` parent keep the same structural placement, but their inferred hierarchy edge uses the built-in `procedure_step` style and optional `next` edges control step order.
 - In CSV, use `edge_type: parent_child` for edges that should define the tree.
 
 `connection_type` only changes how an edge is rendered:
@@ -96,8 +130,14 @@ In Markdown, there are also built-in `link` and `comment` node types:
 - a `link` node has one `target`
 - `target: https://...` creates an external link
 - `target: node-id` or `target: #node-id` creates an internal Excalidraw jump
+- a Markdown image such as `![Flow](media/flow.png)` becomes an attached Excalidraw image element
+- image paths must point to local files inside the diagram folder
+- initial image size comes from the source file dimensions; later resizes are preserved in `positions.json`
 - if a nested `link` node does not declare an explicit `link:` edge, the builder automatically connects it to its parent with the built-in `link` edge style
 - a nested `comment` node is still laid out as a child, but its inferred edge uses the built-in `comment` edge style instead of `parent_child`
+- a `procedure` node can be a normal child in the hierarchy
+- nested `step` nodes under a `procedure` get an inferred `procedure_step` edge, which defaults to `container`
+- `edge.next:` connects one step to the next and is used to order steps inside a procedure
 
 Example `edge_config.json`:
 

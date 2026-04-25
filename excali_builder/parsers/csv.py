@@ -2,12 +2,11 @@
 
 import csv
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from ..core.graph import Graph
 from ..core.node import Node
 from ..core.edge import Edge, ConnectionType
 from ..config.loader import ConfigLoader
-from ..config.schema import GlobalConfig
 from .base import BaseParser
 
 
@@ -41,9 +40,6 @@ class CSVParser(BaseParser):
                     )
                     graph.add_node(node)
 
-        # Load config to look up connection_type from edge_type
-        config = ConfigLoader.load_from_folder(path)
-
         # Load edges from edge.csv
         edge_csv_path = path / "edge.csv"
         if edge_csv_path.exists():
@@ -57,27 +53,21 @@ class CSVParser(BaseParser):
                     if not source_id or not target_id:
                         continue
 
-                    # Look up connection_type from config based on edge_type
-                    connection_type_str = ConfigLoader.get_connection_type(config, edge_type)
-                    
-                    # Map connection_type string to enum
-                    if connection_type_str == "container":
-                        connection_type = ConnectionType.CONTAINER
-                    else:
-                        connection_type = ConnectionType.LINE
-
                     edge = Edge(
                         source_id=source_id,
                         target_id=target_id,
-                        connection_type=connection_type,
+                        connection_type=ConnectionType.LINE,
                         edge_type=edge_type,
                         label=(row.get("label") or "").strip() or None,
                     )
                     graph.add_edge(edge)
+
+        ConfigLoader.ensure_graph_config(path, graph)
+        config = ConfigLoader.load_from_folder(path)
+        ConfigLoader.apply_config_to_graph(graph, config)
 
         return graph
 
     def get_supported_formats(self) -> List[str]:
         """Return list of supported file extensions."""
         return ["csv"]
-

@@ -82,8 +82,55 @@ class Graph:
                 edge.edge_type == "parent_child"
                 and edge.target_id == child_id
                 and edge.source_id in self.nodes
-                and self.nodes[edge.source_id] not in parents
+                    and self.nodes[edge.source_id] not in parents
             ):
                 parents.append(self.nodes[edge.source_id])
 
         return parents
+
+    def get_sequence_children(
+        self,
+        parent_id: str,
+        child_type: str = "step",
+        edge_type: str = "next",
+    ) -> List[Node]:
+        """Return same-parent children ordered by an explicit sequence edge when present."""
+        children = [
+            child for child in self.get_hierarchy_children(parent_id) if child.type == child_type
+        ]
+        if len(children) <= 1:
+            return children
+
+        child_ids = {child.id for child in children}
+        sequence_edges = [
+            edge
+            for edge in self.edges
+            if edge.edge_type == edge_type
+            and edge.source_id in child_ids
+            and edge.target_id in child_ids
+        ]
+        if not sequence_edges:
+            return sorted(
+                children,
+                key=lambda node: node.metadata.get("source_order", float("inf")),
+            )
+
+        outgoing = {edge.source_id: edge.target_id for edge in sequence_edges}
+        incoming = {edge.target_id: edge.source_id for edge in sequence_edges}
+        roots = [child.id for child in children if child.id not in incoming]
+        if len(roots) != 1:
+            return children
+
+        ordered_ids = []
+        current_id = roots[0]
+        visited = set()
+        while current_id is not None and current_id not in visited:
+            ordered_ids.append(current_id)
+            visited.add(current_id)
+            current_id = outgoing.get(current_id)
+
+        if len(ordered_ids) != len(children):
+            return children
+
+        children_by_id = {child.id: child for child in children}
+        return [children_by_id[node_id] for node_id in ordered_ids]

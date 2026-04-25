@@ -10,6 +10,7 @@ The Markdown parser reads one or more `.md` files in a folder and converts them 
 - **Heading hierarchy** creates structural parent-child relationships (H2 → H3 → H4)
 - **Directive lines** define node type, tags, targets, and explicit edges
 - **Inline links** create implicit related edges
+- **Markdown images** become attached image nodes in the Excalidraw output
 
 This format keeps your Markdown files readable in any editor while enabling structured diagram generation.
 
@@ -27,13 +28,17 @@ your-diagram/
 └── output.excalidraw     # Generated Excalidraw file
 ```
 
+If a used node type or edge type is missing from `node_config.json` or `edge_config.json`, the build adds a starter entry automatically before layout and export continue.
+
 ## Mental Model
 
 - A **node** is a box in the diagram. In Markdown, a node comes from a heading with an anchor such as `## Topic {#topic}`. The heading text becomes the node title, and the body under that heading becomes the node text.
 - An **edge** is a relationship between two nodes. In Markdown, some edges are created by you in `edges` blocks such as `prereqs` or `related`, and one structural relationship is created automatically by the builder from heading nesting.
 - **Node types are user-defined labels** such as `category`, `concept`, `detail`, or `principle`. You assign them with directive lines such as `> type: ...`, and `node_config.json` looks up how that type should look. These names are not built into the builder. If you omit `type`, Markdown defaults to `concept`.
 - **Edge types are also user-defined names** such as `prereqs`, `related`, and `contrasts`. You define their meaning in `edge_config.json`. Markdown also has built-in hierarchy-related edge types such as `parent_child`, `link`, and `comment` that can be inferred from heading nesting.
-- **Markdown has two built-in special node types: `link` and `comment`.** A `link` node represents a navigation target. A `comment` node is an annotation/aside that still participates in the tree layout. Both have built-in node and edge defaults, so the minimum Markdown works without adding them to config. You only need to add them if you want to override the defaults styling.
+- **Standard Markdown images stay standard in source.** A body image such as `![Flow](media/flow.png)` still renders in Markdown preview, and the builder converts it into an attached Excalidraw image.
+- **Markdown has built-in special node types such as `link`, `comment`, `procedure`, and `step`.** These built-ins come with default node and edge behavior, so the minimum Markdown works without adding them to config. You only need to add them if you want to override the defaults styling.
+- **Markdown also has built-in `procedure` and `step` node types.** A `procedure` is a normal structural node that can live beside any other children. Nested `step` nodes stay structurally grouped under the procedure, and `next` edges can order them as a linear flow.
 - **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
 - **Layout is built into the builder design.** Fresh builds always use the same tree layout. In Markdown, the layout follows heading hierarchy even when a nested built-in node renders with a different edge type such as `comment` or `link`.
 - **`parent_child` is the normal inferred hierarchy edge type in Markdown.** It comes from heading nesting and defines the default rendered hierarchy edge, but built-in child node types can swap that rendered edge type without changing tree placement.
@@ -42,6 +47,7 @@ your-diagram/
   - `line`: draw a visible line or arrow between nodes
   - `container`: do not draw an arrow; group related nodes in Excalidraw
 - **`container` is not a node type and it no longer drives layout.** It is just a rendering choice. If you switch `parent_child` between `line` and `container`, the tree layout stays the same; only the visible arrow/group behavior changes.
+- **Rendering reads config from disk only.** When the builder encounters a used type missing from config, it writes a starter config entry, reloads config from disk, and then uses that config for layout and export. The code does not keep hidden built-in rendering overrides after that bootstrap step.
 
 ## Markdown Format
 
@@ -114,8 +120,11 @@ Explicit edges use the same directive style:
 
 Built-in node types:
 
+- `image`: implicit attachment node created from Markdown image syntax
 - `link`: clickable node with a required `target`
 - `comment`: annotation node; when nested, it keeps child placement but uses the built-in `comment` edge style
+- `procedure`: container node for an ordered workflow
+- `step`: workflow step node, usually nested under a `procedure`
 
 **Example:**
 
@@ -165,6 +174,26 @@ See also [SQL Basics](#sql-basics) for an introduction.
 
 This creates a `related` edge from the current node to `sql-basics`.
 
+### Inline Images (Implicit Attachment Nodes)
+
+Standard Markdown images inside a node body become attached image nodes in the Excalidraw output.
+
+```markdown
+## Deployment Notes {#deployment-notes}
+
+The current flow uses this diagram ![Flow](media/flow.png) during rollouts.
+```
+
+Rules:
+
+- Any Markdown image `![alt](path)` in body text becomes an attached image node for the current heading node.
+- Image paths must reference local files inside the diagram folder.
+- Paths are resolved relative to the Markdown file that contains the image.
+- The builder removes the Markdown image token from the node's rendered text in Excalidraw, so the text box does not show raw `![...]`.
+- Initial image size comes from the source file dimensions and is capped to a reasonable first-pass size.
+- After you resize or reposition the image in Excalidraw, that geometry is preserved in `positions.json` like any other node.
+- The built-in inferred edge type for these image children is `attachment`, which defaults to `container`.
+
 ### Parent-Child Relationships
 
 Parent-child relationships are automatically inferred from heading hierarchy:
@@ -185,6 +214,41 @@ This creates:
 - `child-b` → `grandchild` (parent_child edge)
 
 If a nested node is `type: comment`, it still participates in the same hierarchy and layout, but its inferred edge renders as `comment` instead of `parent_child`.
+
+If a nested node is `type: step` and its parent is `type: procedure`, it still participates in the same hierarchy and layout, but its inferred edge renders as `procedure_step` instead of `parent_child`. The built-in `procedure_step` edge defaults to `container`, so you usually see the explicit `next` arrows rather than duplicate hierarchy arrows.
+
+### Built-in Procedure Nodes
+
+Use `type: procedure` when you want a node to own an ordered set of steps without turning each step into a deeper heading level.
+
+```markdown
+## Release Management {#release-management}
+
+### Monitoring {#monitoring}
+> type: concept
+
+### Deploy Service {#deploy-service}
+> type: procedure
+
+#### Check Secrets {#deploy-check-secrets}
+> type: step
+> edge.next: deploy-build-image
+
+#### Build Image {#deploy-build-image}
+> type: step
+> edge.next: deploy-push-image
+
+#### Push Image {#deploy-push-image}
+> type: step
+```
+
+Rules:
+
+- A `procedure` node is just another structural child. It can live beside normal children under the same parent.
+- Nested `step` nodes under the same `procedure` are the members of that procedure.
+- If no `next` edges are declared, steps are laid out in source order.
+- If any `next` edges are declared for a procedure, they must form one complete chain across all of that procedure's step children.
+- `next` edges must connect `step` nodes within the same `procedure`.
 
 ### Built-in Link Nodes
 
@@ -359,6 +423,7 @@ Defines styling and behavior for different edge types.
 **Edge Types from Markdown:**
 
 - `parent_child`: Auto-generated from heading hierarchy
+- `attachment`: Built-in edge type used by Markdown image attachments
 - `comment`: Built-in edge type used by nested `comment` nodes
 - `link`: Built-in edge type used by `link` nodes
 - `prereqs`: From edge directives (directed dependency)
@@ -371,6 +436,7 @@ Defines styling and behavior for different edge types.
 - Set `parent_child.connection_type` to `"line"` if you want visible hierarchy arrows.
 - Set `parent_child.connection_type` to `"container"` if you want the same layout without arrows, plus Excalidraw grouping.
 - `comment` nodes are Markdown-only and use the built-in `comment` edge style by default when nested.
+- Markdown images are Markdown-only attachments and use the built-in `attachment` edge style by default.
 - `link` nodes are Markdown-only and use the built-in `link` edge style by default.
 
 **Line Styling Options:**

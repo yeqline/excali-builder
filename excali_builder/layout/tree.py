@@ -75,7 +75,7 @@ class TreeLayout(BaseLayout):
         sibling_spacing: float,
     ) -> None:
         """Recursively position descendants around an already-positioned parent."""
-        children = graph.get_hierarchy_children(parent.id)
+        children = self._get_layout_children(graph, parent)
         if not children:
             return
 
@@ -137,7 +137,7 @@ class TreeLayout(BaseLayout):
             if direction in {"left-right", "right-left"}
             else node.width or 100
         )
-        children = graph.get_hierarchy_children(node.id)
+        children = self._get_layout_children(graph, node)
         if not children:
             return node_span
 
@@ -175,3 +175,21 @@ class TreeLayout(BaseLayout):
             furthest_edge = max(furthest_edge, center + span / 2)
 
         return furthest_edge + root_spacing
+
+    def _get_layout_children(self, graph: Graph, parent: Node) -> List[Node]:
+        """Return structural children in the order this layout should place them."""
+        children = graph.get_hierarchy_children(parent.id)
+        if parent.type != "procedure":
+            return children
+
+        step_children = graph.get_sequence_children(
+            parent.id,
+            child_type="step",
+            edge_type="next",
+        )
+        if not step_children:
+            return children
+
+        step_ids = {child.id for child in step_children}
+        other_children = [child for child in children if child.id not in step_ids]
+        return step_children + other_children
