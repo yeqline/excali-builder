@@ -113,6 +113,8 @@ class ExcaliBuilder:
                 node.metadata["text_align"] = geometry["textAlign"]
             if "verticalAlign" in geometry:
                 node.metadata["vertical_align"] = geometry["verticalAlign"]
+            if "fontSize" in geometry:
+                node.metadata["font_size"] = geometry["fontSize"]
             if "wrapped_text" in geometry:
                 node.metadata["saved_wrapped_text"] = geometry["wrapped_text"]
             if "wrapped_original_text" in geometry:

@@ -772,6 +772,7 @@ class LayoutRegressionTests(unittest.TestCase):
                                 "height": 60,
                                 "text": wrapped_text,
                                 "originalText": full_text,
+                                "fontSize": 22,
                                 "textAlign": "center",
                                 "verticalAlign": "top",
                                 "customData": {"node_id": "git-review-model"},
@@ -796,6 +797,7 @@ class LayoutRegressionTests(unittest.TestCase):
                 positions["git-review-model"]["wrapped_original_text"],
                 full_text,
             )
+            self.assertEqual(positions["git-review-model"]["fontSize"], 22)
 
             output_path = builder.build_from_folder(str(folder))
             data = json.loads(Path(output_path).read_text(encoding="utf-8"))
@@ -815,6 +817,7 @@ class LayoutRegressionTests(unittest.TestCase):
 
         self.assertEqual(text_element["text"], wrapped_text)
         self.assertEqual(text_element["originalText"], full_text)
+        self.assertEqual(text_element["fontSize"], 22)
         self.assertEqual((shape_element["width"], shape_element["height"]), (300, 80))
 
     def test_build_recomputes_text_layout_when_source_text_changes(self):

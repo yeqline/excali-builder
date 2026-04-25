@@ -49,7 +49,7 @@ class ExcalidrawImporter:
                     "height": float(height),
                 }
         
-        # Second pass: extract text alignment, geometry, and wrapped text from text elements
+        # Second pass: extract text alignment, font size, geometry, and wrapped text from text elements
         for element in elements:
             custom_data = element.get("customData", {})
             node_id = custom_data.get("node_id")
@@ -61,6 +61,7 @@ class ExcalidrawImporter:
             # Extract text alignment properties
             text_align = element.get("textAlign")
             vertical_align = element.get("verticalAlign")
+            font_size = element.get("fontSize")
             
             # Extract text element geometry (Excalidraw calculates this when containerId is set)
             text_x = element.get("x")
@@ -76,6 +77,12 @@ class ExcalidrawImporter:
                     positions[node_id]["textAlign"] = text_align
                 if vertical_align:
                     positions[node_id]["verticalAlign"] = vertical_align
+                if (
+                    isinstance(font_size, (int, float))
+                    and not isinstance(font_size, bool)
+                    and font_size > 0
+                ):
+                    positions[node_id]["fontSize"] = font_size
                 # Store text element geometry (Excalidraw-calculated values)
                 if text_x is not None:
                     positions[node_id]["text_x"] = float(text_x)

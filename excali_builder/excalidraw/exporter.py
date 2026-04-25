@@ -50,6 +50,8 @@ class ExcalidrawExporter:
 
     def measure_node(self, node, node_config: NodeTypeConfig) -> Tuple[float, float]:
         """Estimate the node size from the text that will be rendered."""
+        node_config = self._apply_saved_font_size(node, node_config)
+
         if self._is_image_node(node):
             return self._measure_image_node(node)
 
@@ -73,6 +75,7 @@ class ExcalidrawExporter:
 
         for node in graph.nodes.values():
             node_config = ConfigLoader.get_node_config(config, node.type)
+            node_config = self._apply_saved_font_size(node, node_config)
             shape_element_id = self._get_shape_element_id(node.id)
 
             measured_width, measured_height = self.measure_node(node, node_config)
@@ -760,6 +763,30 @@ class ExcalidrawExporter:
             )
 
         return "\n".join(wrapped_lines or [""])
+
+    def _apply_saved_font_size(self, node, node_config: NodeTypeConfig) -> NodeTypeConfig:
+        """Return node config with a saved per-node font size applied."""
+        if not node.metadata:
+            return node_config
+
+        font_size = self._coerce_font_size(node.metadata.get("font_size"))
+        if font_size is None:
+            return node_config
+
+        return node_config.model_copy(update={"font_size": font_size})
+
+    def _coerce_font_size(self, value: Any) -> Optional[int]:
+        """Normalize saved font sizes from positions.json."""
+        if isinstance(value, bool):
+            return None
+        try:
+            font_size = int(value)
+        except (TypeError, ValueError):
+            return None
+
+        if font_size <= 0:
+            return None
+        return font_size
 
     def _get_default_text_x(
         self,
