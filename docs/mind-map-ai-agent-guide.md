@@ -309,8 +309,10 @@ If a nested comment node does not declare anything special, the builder automati
 1. **Start with a root overview node** (H2) that names the subject. Give it `type: category`.
 2. **Let the subject determine the shape** of the map. Some branches may be shallow, while others may need several nested levels.
 3. **Use uneven branch sizes naturally.** Major areas do not need the same number of children; give each area the nodes it needs.
-4. **Add deeper detail when it improves understanding.** Use H4, H5, or H6 children for examples, mechanisms, steps, tradeoffs, or implementation details when the subject calls for them.
-5. **Prefer meaningful decomposition over artificial balance.** A good map should reflect the real structure of the topic, not a fixed template.
+4. **Allow leaves at any level.** Not every H3 needs H4 children, and not every H4 needs H5 children.
+5. **Add deeper detail when it improves understanding.** Use H4, H5, or H6 children for examples, mechanisms, steps, tradeoffs, or implementation details when the subject calls for them.
+6. **Check for artificial symmetry.** If most branches have the same depth and similar child counts, revise the map so each branch reflects its actual complexity.
+7. **Prefer meaningful decomposition over artificial balance.** A good map should reflect the real structure of the topic, not a fixed template.
 
 ### Relationships
 
@@ -329,6 +331,7 @@ If a nested comment node does not declare anything special, the builder automati
 
 - Let the node count follow the subject and purpose of the map. Small topics may need only a few nodes; complex topics may need many more.
 - Each node should represent one distinct concept. Don't combine two ideas into one node just to keep the map small.
+- Do not pad thin branches or truncate rich branches to make the tree look balanced.
 - The body text should usually be concise, but add enough detail for the node to be useful.
 
 ---
@@ -506,6 +509,8 @@ Before you output your files, verify:
 - [ ] No duplicate edges (same source → target with same type)
 - [ ] Node types match keys in `node_config.json`
 - [ ] Node count, branch depth, and child counts fit the subject rather than a fixed template
+- [ ] Leaf nodes appear at natural stopping points, not only at the deepest level
+- [ ] Major branches are not padded or trimmed for symmetry
 - [ ] All three config files are included
 
 ---
