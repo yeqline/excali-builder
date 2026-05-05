@@ -1,9 +1,9 @@
 """Sync system: Update positions.json from Excalidraw file."""
 
-import json
 from pathlib import Path
-from typing import Dict
+
 from .importer import ExcalidrawImporter
+from .positions import merge_positions
 
 
 class ExcalidrawSync:
@@ -32,17 +32,5 @@ class ExcalidrawSync:
         if not positions:
             return
 
-        # Load existing positions.json if it exists
-        positions_json_path = folder_path / "positions.json"
-        existing_positions: Dict[str, Dict[str, float]] = {}
-        if positions_json_path.exists():
-            with open(positions_json_path, "r", encoding="utf-8") as f:
-                existing_positions = json.load(f)
-
-        # Merge: update existing with new positions, keep any that weren't in Excalidraw
-        existing_positions.update(positions)
-
-        # Write updated positions.json
-        with open(positions_json_path, "w", encoding="utf-8") as f:
-            json.dump(existing_positions, f, indent=2)
-
+        # Merge: update existing with new positions, keep any that weren't in Excalidraw.
+        merge_positions(folder_path / "positions.json", positions)

@@ -24,6 +24,9 @@ uv run excali-builder path/to/your-diagram-folder
 
 # Rebuild layout from scratch but keep saved node sizes
 uv run excali-builder --full-refresh path/to/your-diagram-folder
+
+# Serve a local auto-refreshing viewer
+uv run excali-builder serve path/to/your-diagram-folder
 ```
 
 ## How It Works
@@ -39,6 +42,21 @@ Source Files (CSV/MD) ──► Build ──► output.excalidraw
                               │           ▼
                         positions.json ◄──┘ (sync on next build)
 ```
+
+## Serve Mode
+
+`serve` runs the normal sync-then-build flow once, starts a local HTTP server, and watches the diagram folder for changes. The viewer uses the official `@excalidraw/excalidraw` React component, loads the generated `output.excalidraw`, and refreshes the scene after rebuilds without a manual browser reload.
+
+```bash
+uv run excali-builder serve path/to/your-diagram-folder
+uv run excali-builder serve path/to/your-diagram-folder --port 0 --no-open
+```
+
+Watched files are top-level `*.md`, `*.csv`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
+
+Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
+
+The viewer is served locally by the Python server and does not iframe `excalidraw.com`. To keep this Python package small and avoid committing a generated JavaScript bundle, the static page imports pinned browser ESM builds of React and `@excalidraw/excalidraw` from public CDNs on first page load.
 
 ## Input Formats
 
