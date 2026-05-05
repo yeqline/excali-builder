@@ -264,6 +264,17 @@ class QuietServerTests(unittest.TestCase):
 
 
 class StaticViewerTests(unittest.TestCase):
+    def test_viewer_declares_svg_favicon(self):
+        index_html = (SERVE_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        favicon = (SERVE_STATIC_DIR / "favicon.svg").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />',
+            index_html,
+        )
+        self.assertIn('stroke="#2563EB"', favicon)
+        self.assertIn("M10 32h38", favicon)
+
     def test_viewer_uses_excalidraw_browser_import_paths(self):
         index_html = (SERVE_STATIC_DIR / "index.html").read_text(encoding="utf-8")
         viewer_js = (SERVE_STATIC_DIR / "viewer.js").read_text(encoding="utf-8")

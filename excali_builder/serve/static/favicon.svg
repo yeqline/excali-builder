@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="excali-builder">
+  <path
+    d="M10 32h38"
+    fill="none"
+    stroke="#2563EB"
+    stroke-linecap="round"
+    stroke-width="8"
+  />
+  <path
+    d="M38 18l14 14-14 14"
+    fill="none"
+    stroke="#2563EB"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="8"
+  />
+</svg>
