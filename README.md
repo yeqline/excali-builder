@@ -19,28 +19,29 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 Run the CLI directly with `uv`. No separate install step is required for normal local use.
 
 ```bash
-# Build a diagram from a folder
-uv run excali-builder path/to/your-diagram-folder
-
-# Rebuild layout from scratch but keep saved node sizes
-uv run excali-builder --full-refresh path/to/your-diagram-folder
-
-# Serve a local auto-refreshing viewer
+# Start the live mind-map workflow
 uv run excali-builder serve path/to/your-diagram-folder
 ```
 
-## How It Works
+## Main Workflow
 
-1. **Define content** in source files (CSV or Markdown)
-2. **Run excali-builder** to generate `output.excalidraw`
-3. **Open in Excalidraw**, arrange nodes as you like, save
-4. **Re-run excali-builder** — your layout is preserved, content updates from source
+The intended workflow is an AI-assisted editing loop:
+
+1. Ask an AI agent to create an initial mind map for a subject in a diagram folder.
+2. Run `uv run excali-builder serve path/to/your-diagram-folder`.
+3. Open the local viewer URL printed by the command.
+4. Review the generated Excalidraw map in the browser.
+5. Reposition or resize nodes directly in the viewer; layout saves automatically to `positions.json`.
+6. Ask the AI agent to edit the Markdown, CSV, or config files while `serve` keeps running.
+7. The server rebuilds automatically and the viewer refreshes without a manual reload or separate build command.
+
+In this loop, source files are the durable content model and the browser is the durable layout editor. Use the AI agent for titles, body text, relationships, node types, and styling config; use the local viewer for spatial review and layout adjustments.
 
 ```
-Source Files (CSV/MD) ──► Build ──► output.excalidraw
-                              ▲           │
-                              │           ▼
-                        positions.json ◄──┘ (sync on next build)
+AI edits Markdown/CSV/config ──► serve rebuilds ──► local Excalidraw viewer
+          ▲                                               │
+          │                                               ▼
+          └──────────── positions.json ◄── layout saves from viewer
 ```
 
 ## Serve Mode
@@ -57,6 +58,20 @@ Watched files are top-level `*.md`, `*.csv`, `config.json`, `node_config.json`, 
 Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
 
 The viewer is served locally by the Python server and does not iframe `excalidraw.com`. To keep this Python package small and avoid committing a generated JavaScript bundle, the static page imports pinned browser ESM builds of React and `@excalidraw/excalidraw` from public CDNs on first page load.
+
+## One-Shot Build Commands
+
+The original commands still work for scripts or one-off export workflows:
+
+```bash
+# Build a diagram from a folder
+uv run excali-builder path/to/your-diagram-folder
+
+# Rebuild layout from scratch but keep saved node sizes
+uv run excali-builder --full-refresh path/to/your-diagram-folder
+```
+
+A normal one-shot build syncs layout from any existing `output.excalidraw`, then regenerates the diagram. `serve` uses the same sync/build contract but keeps it running continuously.
 
 ## Input Formats
 
