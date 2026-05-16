@@ -4,7 +4,7 @@ This document is for developers working on excali-builder. It explains the archi
 
 ## Purpose
 
-excali-builder converts structured data (CSV or Markdown files) into Excalidraw diagrams with persistent layout. The key innovation is the **two-way sync**: content comes from source files, but layout (positions/sizes) is preserved from user edits in Excalidraw.
+excali-builder converts structured data into Excalidraw diagrams with persistent layout. The key innovation is the **two-way sync**: content comes from source files, but layout (positions/sizes) is preserved from user edits in Excalidraw.
 
 ## Core Concepts
 
@@ -80,6 +80,7 @@ excali_builder/
 | `base.py` | Abstract `BaseParser` interface |
 | `registry.py` | Parser registration by format name |
 | `csv.py` | CSV parser (node.csv, edge.csv) |
+| `dbt.py` | dbt manifest parser with optional `dbt_overlay.json` annotations |
 | `markdown.py` | Markdown parser (headings with anchors) |
 
 **To add a new parser**:
@@ -110,9 +111,12 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 | File | Purpose |
 |------|---------|
 | `base.py` | Abstract `BaseLayout` interface |
+| `dag.py` | Layered DAG layout algorithm |
 | `tree.py` | Tree layout algorithm |
 
-**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement always uses the tree layout and follows the structural hierarchy from the parser.
+**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement uses the configured layout algorithm.
+
+`layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. `dag` ranks nodes by configured dependency edge types such as `lineage`.
 
 #### `excalidraw/` - Excalidraw Integration
 
@@ -204,7 +208,7 @@ Runs sync (if excalidraw exists) then build.
 
 4. **Stable IDs enable syncing**: Every node needs a unique, stable ID that persists across rebuilds
 
-5. **Parsers produce uniform Graph IR**: Different input formats (CSV, MD) all produce the same internal representation
+5. **Parsers produce uniform Graph IR**: Different input formats all produce the same internal representation
 
 ## Testing Locally
 

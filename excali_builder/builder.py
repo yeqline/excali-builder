@@ -9,8 +9,10 @@ from .config.schema import GlobalConfig
 from .core.graph import Graph
 from .excalidraw.exporter import ExcalidrawExporter
 from .excalidraw.sync import ExcalidrawSync
+from .layout.dag import DagLayout
 from .layout.tree import TreeLayout
 from .parsers.csv import CSVParser
+from .parsers.dbt import DbtManifestParser
 from .parsers.markdown import MarkdownParser
 from .parsers.registry import ParserRegistry
 
@@ -26,6 +28,8 @@ class ExcaliBuilder:
 
         # Register default parsers
         self.parser_registry.register("csv", CSVParser)
+        self.parser_registry.register("dbt", DbtManifestParser)
+        self.parser_registry.register("manifest", DbtManifestParser)
         self.parser_registry.register("md", MarkdownParser)
         self.parser_registry.register("markdown", MarkdownParser)
 
@@ -42,10 +46,14 @@ class ExcaliBuilder:
         # 1. Detect input format from config.json
         config_path = folder / "config.json"
         parser_type = "csv"  # default
+        parser_options: Dict[str, Any] = {}
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
                 parser_type = config_data.get("parser_type", "csv")
+                parser_options = config_data.get("parser_options", {})
+                if not isinstance(parser_options, dict):
+                    raise ValueError("config.json field 'parser_options' must be an object")
 
         # 2. Parse input files -> Graph
         parser_class = self.parser_registry.get_parser(parser_type)
@@ -53,7 +61,7 @@ class ExcaliBuilder:
             raise ValueError(f"Unknown parser type: {parser_type}")
 
         parser = parser_class()
-        graph = parser.parse(folder, {})
+        graph = parser.parse(folder, parser_options)
 
         # 3. Load configuration
         config = ConfigLoader.load_from_folder(folder)
@@ -146,14 +154,21 @@ class ExcaliBuilder:
         if all(node.x is not None and node.y is not None for node in graph.nodes.values()):
             return
 
-        TreeLayout().apply_layout(
-            graph,
-            {
-                "direction": config.layout.direction,
-                "level_spacing": config.layout.level_spacing,
-                "sibling_spacing": config.layout.sibling_spacing,
-                "root_spacing": config.layout.root_spacing,
-                "start_x": config.layout.start_x,
-                "start_y": config.layout.start_y,
-            },
-        )
+        layout_config = {
+            "direction": config.layout.direction,
+            "level_spacing": config.layout.level_spacing,
+            "sibling_spacing": config.layout.sibling_spacing,
+            "root_spacing": config.layout.root_spacing,
+            "start_x": config.layout.start_x,
+            "start_y": config.layout.start_y,
+            "rank_edge_types": config.layout.rank_edge_types,
+        }
+
+        algorithm = (config.layout.algorithm or "tree").strip().lower()
+        if algorithm == "tree":
+            TreeLayout().apply_layout(graph, layout_config)
+            return
+        if algorithm == "dag":
+            DagLayout().apply_layout(graph, layout_config)
+            return
+        raise ValueError(f"Unknown layout algorithm: {config.layout.algorithm}")

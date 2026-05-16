@@ -10,10 +10,11 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from ..builder import ExcaliBuilder
+from ..parsers.dbt import get_dbt_input_paths
 from .layout import save_viewer_layout
 from .watcher import FolderWatchState
 
@@ -52,7 +53,10 @@ class ServeState:
     def initial_build(self) -> None:
         """Run the same sync-then-build sequence as the normal CLI."""
         self._build(reason="initial", sync_first=True)
-        self.watch_state = FolderWatchState(self.folder)
+        self.watch_state = FolderWatchState(
+            self.folder,
+            extra_paths=self._get_extra_watch_paths(),
+        )
 
     def start_watcher(self) -> None:
         """Start the background polling watcher."""
@@ -103,6 +107,7 @@ class ServeState:
             if positions:
                 self.builder.build_from_folder(str(self.folder))
                 if self.watch_state is not None:
+                    self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                     self.watch_state.mark_internal_write(self.output_path)
                     self.watch_state.refresh()
 
@@ -129,9 +134,32 @@ class ServeState:
                 self.builder.sync_from_folder(str(self.folder))
             output_path = Path(self.builder.build_from_folder(str(self.folder)))
             if self.watch_state is not None:
+                self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                 self.watch_state.mark_internal_write(output_path)
                 self.watch_state.refresh()
         self.notify({"type": "built", "reason": reason})
+
+    def _get_extra_watch_paths(self) -> List[Path]:
+        config_path = self.folder / "config.json"
+        if not config_path.exists():
+            return []
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return []
+
+        if config.get("parser_type") != "dbt":
+            return []
+
+        parser_options = config.get("parser_options", {})
+        if not isinstance(parser_options, dict):
+            return []
+        try:
+            return get_dbt_input_paths(self.folder, parser_options)
+        except ValueError:
+            return []
 
     def _watch_loop(self) -> None:
         while not self.stop_event.wait(self.poll_interval):

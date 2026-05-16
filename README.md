@@ -1,13 +1,13 @@
 # Excali-Builder
 
-A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from structured data (CSV or Markdown files) with persistent layout.
+A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from structured data (CSV, Markdown, or dbt manifest files) with persistent layout.
 
 ## Why?
 
 - **Version control your diagrams**: Keep diagram content in text files (CSV/Markdown), track changes with git
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
-- **Simple initial layout**: Fresh builds always start from the same tree layout
+- **Simple initial layout**: Fresh builds use deterministic tree or DAG layout
 - **Two rendering modes for edges**: Hide hierarchy arrows with `container` or draw them with `line`
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
 - **Markdown image attachments**: Keep standard `![alt](path)` images in `.md` previews and render them as attached Excalidraw images
@@ -53,7 +53,7 @@ uv run excali-builder serve path/to/your-diagram-folder
 uv run excali-builder serve path/to/your-diagram-folder --port 0 --no-open
 ```
 
-Watched files are top-level `*.md`, `*.csv`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
+Watched files are top-level `*.md`, `*.csv`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. For dbt diagrams, configured manifest and overlay files are watched too, even when manifests live outside the visualization folder. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
 
 Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
 
@@ -101,6 +101,22 @@ your-diagram/
 ```
 
 See [Markdown Parser Guide](docs/md-parser-guide.md) for details.
+Use [Markdown Flow Guide](docs/markdown-flow-guide.md) when you want arbitrary workflows by connecting multiple H1 nodes with explicit Markdown edge directives.
+
+### dbt Manifest Format
+
+```
+your-lineage-diagram/
+├── config.json          # {"parser_type": "dbt", "parser_options": {...}}
+├── dbt_overlay.json     # Optional human-authored graph annotations
+├── node_config.json     # Styling per node type
+├── edge_config.json     # Styling per edge type
+└── output.excalidraw    # Generated output
+```
+
+The dbt parser reads one or more `manifest.json` files, merges included resources into one lineage graph, and uses `dbt_overlay.json` for groupings, additional node descriptions, comments, and local media. Tests are excluded by default.
+
+See [dbt Parser Guide](docs/dbt-parser-guide.md) for details.
 
 Example Markdown:
 
@@ -144,7 +160,7 @@ The current flow uses this diagram ![Flow](media/flow.png) during rollouts.
 
 Used node and edge types are always made explicit in config files. If a build encounters a missing type such as `image`, `attachment`, `comment`, or `next`, it adds a starter entry to `node_config.json` or `edge_config.json` and then reloads config from disk before layout and export. That means the folder config becomes the visible source of truth for rendering.
 
-Initial layout is always a tree. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
+Tree layout is the default. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
 
 - In Markdown, normal nested nodes get an inferred `parent_child` edge from heading nesting.
 - Nested `type: link` nodes keep the same placement but use the built-in `link` edge style unless you declare explicit `link:` edges.
@@ -195,6 +211,7 @@ Example `config.json`:
 {
   "parser_type": "md",
   "layout": {
+    "algorithm": "tree",
     "direction": "left-right",
     "level_spacing": 180,
     "sibling_spacing": 40
@@ -206,6 +223,8 @@ Example `config.json`:
 
 - [CSV Parser Guide](docs/csv-parser-guide.md) — How to use CSV files
 - [Markdown Parser Guide](docs/md-parser-guide.md) — How to use Markdown files
+- [Markdown Flow Guide](docs/markdown-flow-guide.md) — How to create arbitrary workflows with multiple H1 nodes and explicit edges
+- [dbt Parser Guide](docs/dbt-parser-guide.md) — How to visualize dbt manifest lineage with overlays
 - [Development Guide](docs/development-guide.md) — For contributors: architecture, adding parsers, etc.
 
 ## Requirements

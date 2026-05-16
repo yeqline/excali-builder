@@ -38,10 +38,16 @@ class FolderChanges:
 class FolderWatchState:
     """Track watched files and ignore writes made by this process."""
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, extra_paths: Optional[List[Path]] = None):
         self.folder = folder
+        self.extra_paths: Set[Path] = set()
+        self.set_extra_paths(extra_paths or [])
         self.snapshot = self.scan()
         self._internal_writes: Dict[Path, FileSignature] = {}
+
+    def set_extra_paths(self, extra_paths: List[Path]) -> None:
+        """Set additional files watched outside the top-level diagram folder."""
+        self.extra_paths = {path.resolve() for path in extra_paths}
 
     def scan(self) -> Dict[Path, FileSignature]:
         """Return signatures for watched top-level files."""
@@ -94,6 +100,7 @@ class FolderWatchState:
                 continue
             if path.suffix.lower() in SOURCE_SUFFIXES or path.name in WATCHED_FILENAMES:
                 paths.append(path)
+        paths.extend(sorted(self.extra_paths, key=str))
         return paths
 
 

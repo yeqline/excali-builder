@@ -1,6 +1,6 @@
 """Configuration schemas for node, edge, and layout settings."""
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,14 +40,16 @@ class EdgeTypeConfig(BaseModel):
 
 
 class LayoutConfig(BaseModel):
-    """Tree layout settings used for initial placement."""
+    """Layout settings used for initial placement."""
 
+    algorithm: str = "tree"  # tree, dag
     direction: str = "left-right"  # left-right, right-left, top-down, bottom-up
     level_spacing: int = 180
     sibling_spacing: int = 40
     root_spacing: int = 100
     start_x: int = 120
     start_y: int = 120
+    rank_edge_types: List[str] = Field(default_factory=lambda: ["lineage"])
 
 
 class GlobalConfig(BaseModel):

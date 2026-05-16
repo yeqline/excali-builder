@@ -14,6 +14,8 @@ The Markdown parser reads one or more `.md` files in a folder and converts them 
 
 This format keeps your Markdown files readable in any editor while enabling structured diagram generation.
 
+For workflow diagrams, the same parser can also use multiple H1 headings as first-class flow nodes connected by explicit edges. See [Markdown Flow Guide](markdown-flow-guide.md) for the current recommended pattern.
+
 ## Project Structure
 
 A diagram project folder should contain:
