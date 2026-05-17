@@ -31,12 +31,13 @@ class LineConnectionConfig(BaseModel):
 class EdgeTypeConfig(BaseModel):
     """Edge configuration controlling rendering behavior."""
 
-    connection_type: str  # "container" or "line"
+    connection_type: str  # line, group, enclosing_group
     color: Optional[str] = None
     stroke_width: Optional[int] = None
     stroke_style: Optional[str] = None  # solid, dashed, dotted
     arrow_start: Optional[str] = None  # "arrow", "circle", None
     arrow_end: Optional[str] = None  # "arrow", "circle", None
+    group_padding: Optional[int] = None
 
 
 class LayoutConfig(BaseModel):

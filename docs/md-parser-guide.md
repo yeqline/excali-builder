@@ -44,11 +44,12 @@ If a used node type or edge type is missing from `node_config.json` or `edge_con
 - **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
 - **Layout is built into the builder design.** Fresh builds always use the same tree layout. In Markdown, the layout follows heading hierarchy even when a nested built-in node renders with a different edge type such as `comment` or `link`.
 - **`parent_child` is the normal inferred hierarchy edge type in Markdown.** It comes from heading nesting and defines the default rendered hierarchy edge, but built-in child node types can swap that rendered edge type without changing tree placement.
-- **`edge_config.json` is mostly rendering.** It answers: should this edge draw an arrow, or should it behave like a visual group? For line-like edges, it also controls color, thickness, stroke style, and arrowheads.
-- **`connection_type` is part of the builder design, not a user-invented concept.** Every edge type resolves to one of two built-in rendering modes:
+- **`edge_config.json` is mostly visual behavior.** It answers: should this edge draw an arrow, behave like a visual group, or resize a parent around children? For line-like edges, it also controls color, thickness, stroke style, and arrowheads.
+- **`connection_type` is part of the builder design, not a user-invented concept.** Every edge type resolves to one of three built-in rendering modes:
   - `line`: draw a visible line or arrow between nodes
-  - `container`: do not draw an arrow; group related nodes in Excalidraw
-- **`container` is not a node type and it no longer drives layout.** It is just a rendering choice. If you switch `parent_child` between `line` and `container`, the tree layout stays the same; only the visible arrow/group behavior changes.
+  - `group`: do not draw an arrow; group related nodes in Excalidraw
+  - `enclosing_group`: do not draw an arrow; group related nodes in Excalidraw and resize the parent node around its children
+- **`group` is not a node type and it does not drive Markdown tree layout.** It is a rendering choice. If you switch `parent_child` between `line` and `group`, the tree layout stays the same; only the visible arrow/group behavior changes.
 - **Rendering reads config from disk only.** When the builder encounters a used type missing from config, it writes a starter config entry, reloads config from disk, and then uses that config for layout and export. The code does not keep hidden built-in rendering overrides after that bootstrap step.
 
 ## Markdown Format
@@ -125,7 +126,7 @@ Built-in node types:
 - `image`: implicit attachment node created from Markdown image syntax
 - `link`: clickable node with a required `target`
 - `comment`: annotation node; when nested, it keeps child placement but uses the built-in `comment` edge style
-- `procedure`: container node for an ordered workflow
+- `procedure`: workflow node for an ordered set of steps
 - `step`: workflow step node, usually nested under a `procedure`
 
 **Example:**
@@ -194,7 +195,7 @@ Rules:
 - The builder removes the Markdown image token from the node's rendered text in Excalidraw, so the text box does not show raw `![...]`.
 - Initial image size comes from the source file dimensions and is capped to a reasonable first-pass size.
 - After you resize or reposition the image in Excalidraw, that geometry is preserved in `positions.json` like any other node.
-- The built-in inferred edge type for these image children is `attachment`, which defaults to `container`.
+- The built-in inferred edge type for these image children is `attachment`, which defaults to `group`.
 
 ### Parent-Child Relationships
 
@@ -217,7 +218,7 @@ This creates:
 
 If a nested node is `type: comment`, it still participates in the same hierarchy and layout, but its inferred edge renders as `comment` instead of `parent_child`.
 
-If a nested node is `type: step` and its parent is `type: procedure`, it still participates in the same hierarchy and layout, but its inferred edge renders as `procedure_step` instead of `parent_child`. The built-in `procedure_step` edge defaults to `container`, so you usually see the explicit `next` arrows rather than duplicate hierarchy arrows.
+If a nested node is `type: step` and its parent is `type: procedure`, it still participates in the same hierarchy and layout, but its inferred edge renders as `procedure_step` instead of `parent_child`. The built-in `procedure_step` edge defaults to `group`, so you usually see the explicit `next` arrows rather than duplicate hierarchy arrows.
 
 ### Built-in Procedure Nodes
 
@@ -436,7 +437,7 @@ Defines styling and behavior for different edge types.
 
 - Heading hierarchy always defines the tree layout in Markdown.
 - Set `parent_child.connection_type` to `"line"` if you want visible hierarchy arrows.
-- Set `parent_child.connection_type` to `"container"` if you want the same layout without arrows, plus Excalidraw grouping.
+- Set `parent_child.connection_type` to `"group"` if you want the same layout without arrows, plus Excalidraw grouping.
 - `comment` nodes are Markdown-only and use the built-in `comment` edge style by default when nested.
 - Markdown images are Markdown-only attachments and use the built-in `attachment` edge style by default.
 - `link` nodes are Markdown-only and use the built-in `link` edge style by default.
@@ -568,7 +569,7 @@ Details about subtopic B.
 ```json
 {
   "parent_child": {
-    "connection_type": "container"
+    "connection_type": "group"
   }
 }
 ```

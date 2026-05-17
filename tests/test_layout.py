@@ -257,7 +257,7 @@ class LayoutRegressionTests(unittest.TestCase):
         self.assertEqual(image_node.metadata["natural_height"], 20)
         self.assertEqual(len(image_edges), 1)
         self.assertEqual(image_edges[0].edge_type, "attachment")
-        self.assertEqual(image_edges[0].connection_type, ConnectionType.CONTAINER)
+        self.assertEqual(image_edges[0].connection_type, ConnectionType.GROUP)
 
     def test_parse_bootstraps_missing_used_types_into_config_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -293,7 +293,7 @@ class LayoutRegressionTests(unittest.TestCase):
         self.assertEqual(node_config["image"]["borderRadius"], 12)
         self.assertIn("attachment", edge_config)
         self.assertIn("comment", edge_config)
-        self.assertEqual(edge_config["attachment"]["connection_type"], "container")
+        self.assertEqual(edge_config["attachment"]["connection_type"], "group")
 
     def test_parse_reads_attachment_connection_type_from_written_config(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -317,7 +317,7 @@ class LayoutRegressionTests(unittest.TestCase):
 
             graph = MarkdownParser().parse(folder, {})
             attachment_edge = next(edge for edge in graph.edges if edge.edge_type == "attachment")
-            self.assertEqual(attachment_edge.connection_type, ConnectionType.CONTAINER)
+            self.assertEqual(attachment_edge.connection_type, ConnectionType.GROUP)
 
             edge_config_path = folder / "edge_config.json"
             edge_config = json.loads(edge_config_path.read_text(encoding="utf-8"))
@@ -378,7 +378,7 @@ class LayoutRegressionTests(unittest.TestCase):
         ]
         self.assertEqual(len(procedure_edges), 2)
         self.assertTrue(
-            all(edge.connection_type == ConnectionType.CONTAINER for edge in procedure_edges)
+            all(edge.connection_type == ConnectionType.GROUP for edge in procedure_edges)
         )
         self.assertEqual(
             [
@@ -503,7 +503,7 @@ class LayoutRegressionTests(unittest.TestCase):
             Edge(
                 source_id="root",
                 target_id="child",
-                connection_type=ConnectionType.CONTAINER,
+                connection_type=ConnectionType.GROUP,
                 edge_type="parent_child",
             )
         )
@@ -522,7 +522,7 @@ class LayoutRegressionTests(unittest.TestCase):
         config.edge_types["parent_child"] = EdgeTypeConfig(
             **{
                 **ConfigLoader._get_edge_type_template("parent_child"),
-                "connection_type": "container",
+                "connection_type": "group",
             }
         )
 
@@ -530,6 +530,52 @@ class LayoutRegressionTests(unittest.TestCase):
 
         self.assertEqual((root.x, root.y), (40, 60))
         self.assertEqual((child.x, child.y), (300, 70))
+
+    def test_enclosing_group_resizes_parent_around_positioned_children(self):
+        graph = Graph()
+        group = Node(id="finance", label="Finance", type="dbt_group", width=120, height=50)
+        model_a = Node(
+            id="model.finance.stg_orders",
+            label="stg_orders",
+            type="dbt_model",
+            x=200,
+            y=180,
+            width=100,
+            height=40,
+        )
+        model_b = Node(
+            id="model.finance.fct_orders",
+            label="fct_orders",
+            type="dbt_model",
+            x=360,
+            y=260,
+            width=80,
+            height=60,
+        )
+        for node in [group, model_a, model_b]:
+            graph.add_node(node)
+        for model in [model_a, model_b]:
+            graph.add_edge(
+                Edge(
+                    source_id=group.id,
+                    target_id=model.id,
+                    connection_type=ConnectionType.ENCLOSING_GROUP,
+                    edge_type="group_member",
+                )
+            )
+
+        config = _build_explicit_config(
+            node_types=["dbt_group", "dbt_model"],
+            edge_types=["group_member"],
+        )
+        config.edge_types["group_member"].group_padding = 30
+
+        ExcaliBuilder()._apply_layout_to_new_nodes(graph, config)
+
+        self.assertEqual((model_a.x, model_a.y), (200, 180))
+        self.assertEqual((model_b.x, model_b.y), (360, 260))
+        self.assertEqual((group.x, group.y), (170, 102))
+        self.assertEqual((group.width, group.height), (300, 248))
 
     def test_procedure_layout_orders_steps_by_next_chain(self):
         graph = Graph()
@@ -573,7 +619,7 @@ class LayoutRegressionTests(unittest.TestCase):
                 Edge(
                     source_id="deploy-service",
                     target_id=step_id,
-                    connection_type=ConnectionType.CONTAINER,
+                    connection_type=ConnectionType.GROUP,
                     edge_type="procedure_step",
                 )
             )
@@ -988,7 +1034,7 @@ class LayoutRegressionTests(unittest.TestCase):
                 Edge(
                     source_id="topic",
                     target_id=image_node.id,
-                    connection_type=ConnectionType.CONTAINER,
+                    connection_type=ConnectionType.GROUP,
                     edge_type="attachment",
                 )
             )
@@ -1029,6 +1075,95 @@ class LayoutRegressionTests(unittest.TestCase):
             data["files"][image_element["fileId"]]["dataURL"].startswith("data:image/png;base64,")
         )
 
+    def test_exporter_draws_enclosing_group_before_children(self):
+        graph = Graph()
+        outer_group = Node(
+            id="overlay.group.finance",
+            label="Finance",
+            type="dbt_group",
+            x=80,
+            y=80,
+            width=360,
+            height=240,
+        )
+        inner_group = Node(
+            id="overlay.group.finance-marts",
+            label="Marts",
+            type="dbt_group",
+            x=120,
+            y=130,
+            width=260,
+            height=150,
+        )
+        model = Node(
+            id="model.finance.fct_orders",
+            label="fct_orders",
+            type="dbt_model",
+            x=160,
+            y=180,
+            width=160,
+            height=60,
+        )
+        graph.add_node(model)
+        graph.add_node(outer_group)
+        graph.add_node(inner_group)
+        graph.add_edge(
+            Edge(
+                source_id=outer_group.id,
+                target_id=inner_group.id,
+                connection_type=ConnectionType.ENCLOSING_GROUP,
+                edge_type="group_member",
+            )
+        )
+        graph.add_edge(
+            Edge(
+                source_id=inner_group.id,
+                target_id=model.id,
+                connection_type=ConnectionType.ENCLOSING_GROUP,
+                edge_type="group_member",
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "output.excalidraw"
+            ExcalidrawExporter().export(
+                graph,
+                _build_explicit_config(
+                    node_types=["dbt_group", "dbt_model"],
+                    edge_types=["group_member"],
+                ),
+                str(output_path),
+            )
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+
+        shape_indexes = {
+            element["customData"]["node_id"]: index
+            for index, element in enumerate(data["elements"])
+            if element["type"] == "rectangle"
+        }
+        shapes = {
+            element["customData"]["node_id"]: element
+            for element in data["elements"]
+            if element["type"] == "rectangle"
+        }
+
+        self.assertLess(
+            shape_indexes["overlay.group.finance"],
+            shape_indexes["overlay.group.finance-marts"],
+        )
+        self.assertLess(
+            shape_indexes["overlay.group.finance-marts"],
+            shape_indexes["model.finance.fct_orders"],
+        )
+        self.assertIn(
+            shapes["overlay.group.finance"]["groupIds"][0],
+            shapes["model.finance.fct_orders"]["groupIds"],
+        )
+        self.assertEqual(
+            shapes["overlay.group.finance-marts"]["groupIds"],
+            shapes["model.finance.fct_orders"]["groupIds"],
+        )
+
     def test_procedure_and_step_use_built_in_defaults_and_next_edge_style(self):
         graph = Graph()
         procedure = Node(
@@ -1065,7 +1200,7 @@ class LayoutRegressionTests(unittest.TestCase):
             Edge(
                 source_id="deploy-service",
                 target_id="check-secrets",
-                connection_type=ConnectionType.CONTAINER,
+                connection_type=ConnectionType.GROUP,
                 edge_type="procedure_step",
             )
         )
@@ -1073,7 +1208,7 @@ class LayoutRegressionTests(unittest.TestCase):
             Edge(
                 source_id="deploy-service",
                 target_id="build-image",
-                connection_type=ConnectionType.CONTAINER,
+                connection_type=ConnectionType.GROUP,
                 edge_type="procedure_step",
             )
         )

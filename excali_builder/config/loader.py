@@ -137,7 +137,7 @@ class ConfigLoader:
     }
     EDGE_TYPE_TEMPLATES = {
         "attachment": {
-            "connection_type": "container",
+            "connection_type": "group",
             "color": "#6B7280",
             "stroke_width": 2,
             "stroke_style": "dashed",
@@ -169,7 +169,7 @@ class ConfigLoader:
             "arrow_end": "arrow",
         },
         "procedure_step": {
-            "connection_type": "container",
+            "connection_type": "group",
             "color": "#2563EB",
             "stroke_width": 2,
             "stroke_style": "solid",
@@ -177,12 +177,13 @@ class ConfigLoader:
             "arrow_end": "arrow",
         },
         "group_member": {
-            "connection_type": "container",
+            "connection_type": "enclosing_group",
             "color": "#64748B",
             "stroke_width": 2,
             "stroke_style": "solid",
             "arrow_start": None,
             "arrow_end": None,
+            "group_padding": 48,
         },
         "lineage": {
             "connection_type": "line",
@@ -295,13 +296,17 @@ class ConfigLoader:
 
     @staticmethod
     def get_connection_type(config: GlobalConfig, edge_type: str) -> ConnectionType:
-        """Get connection type (container or line) for an edge type."""
+        """Get connection type for an edge type."""
         edge_config = config.edge_types.get(edge_type)
         if not edge_config:
             raise ValueError(f"Missing edge config for type '{edge_type}'")
-        if edge_config.connection_type == "container":
-            return ConnectionType.CONTAINER
-        return ConnectionType.LINE
+        try:
+            return ConnectionType(edge_config.connection_type)
+        except ValueError as exc:
+            raise ValueError(
+                f"Edge type '{edge_type}' has invalid connection_type "
+                f"'{edge_config.connection_type}'"
+            ) from exc
 
     @staticmethod
     def get_line_config(config: GlobalConfig, edge_type: str) -> LineConnectionConfig:

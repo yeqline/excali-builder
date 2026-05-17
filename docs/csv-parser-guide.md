@@ -6,8 +6,9 @@ This guide explains how to use the CSV parser to create Excalidraw diagrams from
 
 The CSV parser reads node and edge definitions from CSV files and converts them into Excalidraw diagrams. Fresh builds always use a tree layout. The hierarchy for that tree comes from edges with `edge_type: parent_child`.
 
-- **Container connections**: No arrow is drawn; related nodes are grouped in Excalidraw
 - **Line connections**: Relationship arrows between nodes
+- **Group connections**: No arrow is drawn; related nodes are grouped in Excalidraw
+- **Enclosing group connections**: No arrow is drawn; the parent node is resized around child nodes
 
 ## Project Structure
 
@@ -72,7 +73,7 @@ api,user-service,directional_link,calls
 **Important**:
 
 - Use `edge_type: parent_child` for edges that should define the tree layout.
-- The `connection_type` (container vs line) is still determined from `edge_config.json`; it only affects rendering.
+- The `connection_type` is still determined from `edge_config.json`; it only affects rendering.
 
 ## Configuration Files
 
@@ -151,16 +152,16 @@ Defines styling for different node types. Each node type can have its own visual
 
 ### edge_config.json
 
-Defines rendering behavior for different edge types. Each edge type must specify its `connection_type` (`container` or `line`) along with any line styling properties.
+Defines rendering behavior for different edge types. Each edge type must specify its `connection_type` (`line`, `group`, or `enclosing_group`) along with any styling properties.
 
 #### Parent-Child Hierarchy
 
-Only edges with `edge_type: parent_child` define the tree layout. You can still render those edges in two ways:
+Only edges with `edge_type: parent_child` define the tree layout. You can still choose how those edges render:
 
 ```json
 {
   "parent_child": {
-    "connection_type": "container"
+    "connection_type": "group"
   }
 }
 ```
@@ -178,9 +179,10 @@ or
 
 **Behavior:**
 
-- The initial layout is the same in both cases.
-- `container` hides the arrow and groups the related nodes in Excalidraw.
+- Tree placement follows the same hierarchy.
 - `line` draws a visible parent-child line.
+- `group` hides the arrow and groups the related nodes in Excalidraw.
+- `enclosing_group` hides the arrow, groups the related nodes in Excalidraw, and resizes the parent node around its children.
 
 #### Line Connection Configuration
 
@@ -308,7 +310,7 @@ root,child2,parent_child,
 ```json
 {
   "parent_child": {
-    "connection_type": "container"
+    "connection_type": "group"
   }
 }
 ```
@@ -369,7 +371,7 @@ module-b,service-x,calls,
 ```json
 {
   "parent_child": {
-    "connection_type": "container"
+    "connection_type": "group"
   },
   "calls": {
     "connection_type": "line",
@@ -390,7 +392,7 @@ This creates a diagram where `module-a` and `module-b` are laid out as children 
 
 2. **Edge Types**: Create meaningful edge type names (e.g., `"dependency"`, `"queries"`, `"calls"`) rather than generic names. Reserve `parent_child` for hierarchy.
 
-3. **Container vs Line**: Use `parent_child` for hierarchy, then choose whether that hierarchy should render as `container` or `line`. Use other line edge types for relationships such as dependencies or data flow.
+3. **Group vs Line**: Use `parent_child` for hierarchy, then choose whether that hierarchy should render as `group`, `enclosing_group`, or `line`. Use other line edge types for relationships such as dependencies or data flow.
 
 4. **Position Persistence**: After editing positions in Excalidraw, always run the build command again to sync positions. The positions are saved to `positions.json` and will be used in future builds.
 
@@ -412,7 +414,7 @@ This creates a diagram where `module-a` and `module-b` are laid out as children 
 ### Nodes not appearing in groups
 
 - Check that `edge_type` in `edge.csv` matches a key in `edge_config.json`
-- Verify that the edge type has `"connection_type": "container"` in `edge_config.json`
+- Verify that the edge type has `"connection_type": "group"` or `"connection_type": "enclosing_group"` in `edge_config.json`
 - Ensure parent and child node IDs exist in `node.csv`
 
 ### Arrows not showing

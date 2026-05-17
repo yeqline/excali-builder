@@ -8,7 +8,7 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
 - **Simple initial layout**: Fresh builds use deterministic tree or DAG layout
-- **Two rendering modes for edges**: Hide hierarchy arrows with `container` or draw them with `line`
+- **Multiple rendering modes for edges**: Draw arrows with `line`, visually group nodes with `group`, or draw enclosing groups with `enclosing_group`
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
 - **Markdown image attachments**: Keep standard `![alt](path)` images in `.md` previews and render them as attached Excalidraw images
 - **Built-in procedures and ordered steps**: Model long step-by-step flows without abusing heading depth
@@ -169,10 +169,11 @@ Tree layout is the default. In Markdown, heading hierarchy is always structural 
 - Nested `type: step` nodes under a `type: procedure` parent keep the same structural placement, but their inferred hierarchy edge uses the built-in `procedure_step` style and optional `next` edges control step order.
 - In CSV, use `edge_type: parent_child` for edges that should define the tree.
 
-`connection_type` only changes how an edge is rendered:
+`connection_type` changes how an edge is represented:
 
-- **Container** (`connection_type: "container"`): No arrow is drawn. Parent and children are grouped in Excalidraw.
 - **Line** (`connection_type: "line"`): Draws arrows/lines between nodes.
+- **Group** (`connection_type: "group"`): No arrow is drawn. Parent and children are grouped in Excalidraw.
+- **Enclosing group** (`connection_type: "enclosing_group"`): No arrow is drawn. Parent and children are grouped in Excalidraw, and the parent node is resized to enclose its children.
 
 In Markdown, there are also built-in `link` and `comment` node types:
 
@@ -185,7 +186,7 @@ In Markdown, there are also built-in `link` and `comment` node types:
 - if a nested `link` node does not declare an explicit `link:` edge, the builder automatically connects it to its parent with the built-in `link` edge style
 - a nested `comment` node is still laid out as a child, but its inferred edge uses the built-in `comment` edge style instead of `parent_child`
 - a `procedure` node can be a normal child in the hierarchy
-- nested `step` nodes under a `procedure` get an inferred `procedure_step` edge, which defaults to `container`
+- nested `step` nodes under a `procedure` get an inferred `procedure_step` edge, which defaults to `group`
 - `edge.next:` connects one step to the next and is used to order steps inside a procedure
 
 Example `edge_config.json`:

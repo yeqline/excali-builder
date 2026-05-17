@@ -3,6 +3,7 @@
 from collections import defaultdict, deque
 from typing import Dict, Iterable, List, Set
 
+from ..core.edge import ConnectionType
 from ..core.graph import Graph
 from ..core.node import Node
 from .base import BaseLayout
@@ -179,7 +180,11 @@ class DagLayout(BaseLayout):
     ) -> None:
         group_children: Dict[str, List[str]] = defaultdict(list)
         for edge in graph.edges:
-            if edge.edge_type == "group_member" and edge.source_id in group_node_ids:
+            if (
+                edge.connection_type == ConnectionType.GROUP
+                and edge.edge_type == "group_member"
+                and edge.source_id in group_node_ids
+            ):
                 group_children[edge.source_id].append(edge.target_id)
 
         positioned: Set[str] = set()

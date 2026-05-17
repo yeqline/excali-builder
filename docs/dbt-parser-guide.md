@@ -77,10 +77,10 @@ Default node types:
 
 Default edge types:
 
-- `lineage`
-- `group_member`
-- `comment`
-- `attachment`
+- `lineage`: visible dependency arrows
+- `group_member`: enclosing group membership
+- `comment`: visible dashed annotation lines
+- `attachment`: Excalidraw grouping for media attachments
 
 Missing node and edge config entries are written to `node_config.json` and `edge_config.json` during build, matching the existing config behavior.
 
@@ -154,7 +154,7 @@ After a successful parse, the builder writes `dbt_node_index.json` in the visual
 
 ### Groups
 
-Groups create `dbt_group` nodes and `group_member` container edges. Nested object syntax is concise for human-authored overlays:
+Groups create `dbt_group` nodes and `group_member` enclosing group edges. Nested object syntax is concise for human-authored overlays:
 
 ```json
 {
@@ -166,6 +166,8 @@ Groups create `dbt_group` nodes and `group_member` container edges. Nested objec
   }
 }
 ```
+
+The default `group_member` edge uses `connection_type: "enclosing_group"` and `group_padding: 48`, so group nodes are resized around their children after the DAG layout places dbt resources.
 
 Group objects can also be explicit:
 

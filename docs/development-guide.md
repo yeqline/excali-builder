@@ -10,19 +10,25 @@ excali-builder converts structured data into Excalidraw diagrams with persistent
 
 ### Connection Types
 
-The system distinguishes two fundamentally different types of connections:
+The system distinguishes three rendering behaviors for connections:
 
-1. **Container connections** (`connection_type: "container"`): 
+1. **Line connections** (`connection_type: "line"`):
+   - Represent relationships between nodes
+   - Rendered as arrows/lines in Excalidraw
+   - Can have arrowheads, different colors, styles
+   - Example: A dependency arrow between services
+
+2. **Group connections** (`connection_type: "group"`):
    - Do not draw visible arrows
    - Can be used to group related nodes in Excalidraw
    - Do not control layout
    - Example: Hide parent-child arrows while keeping a grouped hierarchy
 
-2. **Line connections** (`connection_type: "line"`):
-   - Represent relationships between nodes
-   - Rendered as arrows/lines in Excalidraw
-   - Can have arrowheads, different colors, styles
-   - Example: A dependency arrow between services
+3. **Enclosing group connections** (`connection_type: "enclosing_group"`):
+   - Do not draw visible arrows
+   - Group related nodes in Excalidraw
+   - Resize and reposition the parent node around its children after base layout
+   - Example: Draw a dbt domain box around the models assigned to that domain
 
 ### Stable IDs
 
@@ -104,7 +110,7 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 - `node_config.json`: Styling per node type
 - `edge_config.json`: Styling and connection_type per edge type
 
-**Design decision**: `edge_config.json` defines `connection_type` (container/line) per edge_type. Layout does not depend on `connection_type`; Markdown layout follows heading hierarchy, and CSV layout follows `parent_child` edges.
+**Design decision**: `edge_config.json` defines `connection_type` per edge_type. Markdown and CSV structural layout follows heading hierarchy or `parent_child` edges. `enclosing_group` then adjusts parent bounds around children after the base layout has run.
 
 #### `layout/` - Positioning
 
@@ -130,7 +136,7 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 - Rectangle/ellipse elements for nodes
 - Text elements bound to shape containers
 - Arrow elements for line connections
-- Groups for container relationships
+- Groups for `group` and `enclosing_group` relationships
 - `customData.node_id` for position syncing
 - Deterministic shape/text element IDs so internal link nodes can target other nodes reliably
 

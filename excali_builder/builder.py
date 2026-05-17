@@ -2,10 +2,11 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from .config.loader import ConfigLoader
 from .config.schema import GlobalConfig
+from .core.edge import ConnectionType
 from .core.graph import Graph
 from .excalidraw.exporter import ExcalidrawExporter
 from .excalidraw.sync import ExcalidrawSync
@@ -151,24 +152,105 @@ class ExcaliBuilder:
                 if node.height is None:
                     node.height = measured_height
 
-        if all(node.x is not None and node.y is not None for node in graph.nodes.values()):
+        if not all(node.x is not None and node.y is not None for node in graph.nodes.values()):
+            layout_config = {
+                "direction": config.layout.direction,
+                "level_spacing": config.layout.level_spacing,
+                "sibling_spacing": config.layout.sibling_spacing,
+                "root_spacing": config.layout.root_spacing,
+                "start_x": config.layout.start_x,
+                "start_y": config.layout.start_y,
+                "rank_edge_types": config.layout.rank_edge_types,
+            }
+
+            algorithm = (config.layout.algorithm or "tree").strip().lower()
+            if algorithm == "tree":
+                TreeLayout().apply_layout(graph, layout_config)
+            elif algorithm == "dag":
+                DagLayout().apply_layout(graph, layout_config)
+            else:
+                raise ValueError(f"Unknown layout algorithm: {config.layout.algorithm}")
+
+        self._apply_enclosing_group_layout(graph, config)
+
+    def _apply_enclosing_group_layout(self, graph: Graph, config: GlobalConfig) -> None:
+        """Resize enclosing group parents around their positioned children."""
+        children_by_parent: Dict[str, List[str]] = {}
+        padding_by_parent: Dict[str, int] = {}
+        for edge in graph.edges:
+            if edge.connection_type != ConnectionType.ENCLOSING_GROUP:
+                continue
+            if edge.source_id not in graph.nodes or edge.target_id not in graph.nodes:
+                continue
+
+            children_by_parent.setdefault(edge.source_id, []).append(edge.target_id)
+            edge_config = ConfigLoader.get_edge_type_config(config, edge.edge_type)
+            padding = (
+                edge_config.group_padding
+                if edge_config and edge_config.group_padding is not None
+                else 48
+            )
+            padding_by_parent[edge.source_id] = max(
+                padding_by_parent.get(edge.source_id, 0),
+                padding,
+            )
+
+        if not children_by_parent:
             return
 
-        layout_config = {
-            "direction": config.layout.direction,
-            "level_spacing": config.layout.level_spacing,
-            "sibling_spacing": config.layout.sibling_spacing,
-            "root_spacing": config.layout.root_spacing,
-            "start_x": config.layout.start_x,
-            "start_y": config.layout.start_y,
-            "rank_edge_types": config.layout.rank_edge_types,
-        }
+        positioned: Set[str] = set()
+        visiting: Set[str] = set()
 
-        algorithm = (config.layout.algorithm or "tree").strip().lower()
-        if algorithm == "tree":
-            TreeLayout().apply_layout(graph, layout_config)
-            return
-        if algorithm == "dag":
-            DagLayout().apply_layout(graph, layout_config)
-            return
-        raise ValueError(f"Unknown layout algorithm: {config.layout.algorithm}")
+        def place_parent(parent_id: str) -> None:
+            if parent_id in positioned or parent_id in visiting:
+                return
+            visiting.add(parent_id)
+
+            for child_id in sorted(children_by_parent.get(parent_id, [])):
+                if child_id in children_by_parent:
+                    place_parent(child_id)
+
+            parent = graph.nodes[parent_id]
+            children = [
+                graph.nodes[child_id]
+                for child_id in children_by_parent.get(parent_id, [])
+                if child_id in graph.nodes
+                and graph.nodes[child_id].x is not None
+                and graph.nodes[child_id].y is not None
+            ]
+            if children:
+                min_x = min(child.x or 0 for child in children)
+                min_y = min(child.y or 0 for child in children)
+                max_x = max((child.x or 0) + (child.width or 100) for child in children)
+                max_y = max((child.y or 0) + (child.height or 50) for child in children)
+
+                padding = padding_by_parent.get(parent_id, 48)
+                node_config = ConfigLoader.get_node_config(config, parent.type)
+                header_height = max(node_config.font_size + node_config.padding * 2, 48)
+                min_width = parent.width or 100
+                min_height = parent.height or header_height
+
+                parent.x = min_x - padding
+                parent.y = min_y - padding - header_height
+                parent.width = max(min_width, (max_x - min_x) + padding * 2)
+                parent.height = max(
+                    min_height,
+                    (max_y - min_y) + padding * 2 + header_height,
+                )
+                if parent.metadata is None:
+                    parent.metadata = {}
+                for metadata_key in (
+                    "saved_wrapped_text",
+                    "saved_wrapped_original_text",
+                    "text_x",
+                    "text_y",
+                    "text_width",
+                    "text_height",
+                ):
+                    parent.metadata.pop(metadata_key, None)
+
+            visiting.remove(parent_id)
+            positioned.add(parent_id)
+
+        for parent_id in sorted(children_by_parent):
+            place_parent(parent_id)

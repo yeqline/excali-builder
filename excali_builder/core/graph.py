@@ -21,12 +21,22 @@ class Graph:
         """Add an edge to the graph."""
         self.edges.append(edge)
 
-    def get_container_children(self, parent_id: str) -> List[Node]:
-        """Get nodes that are container-connected to parent (grouped rendering)."""
+    def get_group_children(self, parent_id: str) -> List[Node]:
+        """Get nodes that are grouped with a parent in Excalidraw."""
         return [
             self.nodes[edge.target_id]
             for edge in self.edges
-            if edge.connection_type == ConnectionType.CONTAINER
+            if edge.connection_type in {ConnectionType.GROUP, ConnectionType.ENCLOSING_GROUP}
+            and edge.source_id == parent_id
+            and edge.target_id in self.nodes
+        ]
+
+    def get_enclosing_group_children(self, parent_id: str) -> List[Node]:
+        """Get nodes that should be enclosed by the parent node bounds."""
+        return [
+            self.nodes[edge.target_id]
+            for edge in self.edges
+            if edge.connection_type == ConnectionType.ENCLOSING_GROUP
             and edge.source_id == parent_id
             and edge.target_id in self.nodes
         ]
@@ -59,12 +69,12 @@ class Graph:
             and (edge.source_id == node_id or edge.target_id == node_id)
         ]
 
-    def get_container_parents(self, child_id: str) -> List[Node]:
-        """Get parent nodes that contain this child via container connections."""
+    def get_group_parents(self, child_id: str) -> List[Node]:
+        """Get parent nodes grouped with this child in Excalidraw."""
         return [
             self.nodes[edge.source_id]
             for edge in self.edges
-            if edge.connection_type == ConnectionType.CONTAINER
+            if edge.connection_type in {ConnectionType.GROUP, ConnectionType.ENCLOSING_GROUP}
             and edge.target_id == child_id
             and edge.source_id in self.nodes
         ]

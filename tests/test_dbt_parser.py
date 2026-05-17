@@ -197,7 +197,7 @@ class DbtParserTests(unittest.TestCase):
                     "group_member",
                     "overlay.group.finance-staging",
                     "model.finance.stg_orders",
-                    ConnectionType.CONTAINER,
+                    ConnectionType.ENCLOSING_GROUP,
                 ),
                 edge_pairs,
             )
@@ -207,6 +207,47 @@ class DbtParserTests(unittest.TestCase):
                 graph.nodes["model.finance.fct_orders"].metadata["text"],
             )
             self.assertTrue((folder / "dbt_node_index.json").exists())
+
+    def test_duplicate_manifest_resources_fill_missing_description(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            first_manifest = {
+                "nodes": {
+                    "model.finance.fct_orders": _model(
+                        "finance",
+                        "fct_orders",
+                        description="",
+                    )
+                },
+                "parent_map": {},
+            }
+            second_manifest = {
+                "nodes": {
+                    "model.finance.fct_orders": _model(
+                        "finance",
+                        "fct_orders",
+                        description="Detailed description.",
+                    )
+                },
+                "parent_map": {},
+            }
+            _write_manifest(folder / "first" / "manifest.json", first_manifest)
+            _write_manifest(folder / "second" / "manifest.json", second_manifest)
+
+            graph = DbtManifestParser().parse(
+                folder,
+                {
+                    "manifest_paths": [
+                        "first/manifest.json",
+                        "second/manifest.json",
+                    ],
+                },
+            )
+
+        self.assertIn(
+            "Detailed description.",
+            graph.nodes["model.finance.fct_orders"].metadata["text"],
+        )
 
     def test_dbt_overlay_rejects_ambiguous_bare_references(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

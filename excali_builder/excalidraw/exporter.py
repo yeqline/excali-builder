@@ -4,7 +4,7 @@ import hashlib
 import json
 import textwrap
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple
 from ..core.graph import Graph
 from ..core.edge import ConnectionType
 from ..config.schema import GlobalConfig, NodeTypeConfig, LineConnectionConfig
@@ -73,7 +73,7 @@ class ExcalidrawExporter:
         node_element_map: Dict[str, str] = {}  # Maps node_id to element_id for binding
         element_index_map: Dict[str, int] = {}  # Maps element_id to index in elements list
 
-        for node in graph.nodes.values():
+        for node in self._get_node_export_order(graph):
             node_config = ConfigLoader.get_node_config(config, node.type)
             node_config = self._apply_saved_font_size(node, node_config)
             shape_element_id = self._get_shape_element_id(node.id)
@@ -235,44 +235,12 @@ class ExcalidrawExporter:
                             {"id": arrow_id, "type": "arrow"}
                         )
 
-        # Create groups for container connections
-        # Group children with their parent nodes
-        for node in graph.nodes.values():
-            container_children = graph.get_container_children(node.id)
-            if container_children:
-                # Create a group ID for this parent and its children
-                group_id = self._generate_element_id()
-                parent_element_id = node_element_map.get(node.id)
-                
-                # Add parent to group
-                if parent_element_id and parent_element_id in element_index_map:
-                    parent_element = elements[element_index_map[parent_element_id]]
-                    if "groupIds" not in parent_element:
-                        parent_element["groupIds"] = []
-                    parent_element["groupIds"].append(group_id)
-                    
-                    # Also add parent's text to the group
-                    for text_elem in elements:
-                        if text_elem.get("type") == "text" and text_elem.get("containerId") == parent_element_id:
-                            if "groupIds" not in text_elem:
-                                text_elem["groupIds"] = []
-                            text_elem["groupIds"].append(group_id)
-                
-                # Add all children to the same group
-                for child_node in container_children:
-                    child_element_id = node_element_map.get(child_node.id)
-                    if child_element_id and child_element_id in element_index_map:
-                        child_element = elements[element_index_map[child_element_id]]
-                        if "groupIds" not in child_element:
-                            child_element["groupIds"] = []
-                        child_element["groupIds"].append(group_id)
-                        
-                        # Also add child's text to the group
-                        for text_elem in elements:
-                            if text_elem.get("type") == "text" and text_elem.get("containerId") == child_element_id:
-                                if "groupIds" not in text_elem:
-                                    text_elem["groupIds"] = []
-                                text_elem["groupIds"].append(group_id)
+        self._apply_excalidraw_groups(
+            graph,
+            elements,
+            node_element_map,
+            element_index_map,
+        )
 
         # Create Excalidraw JSON structure
         excalidraw_data = {
@@ -290,6 +258,131 @@ class ExcalidrawExporter:
         # Write to file
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(excalidraw_data, f, indent=2)
+
+    def _get_node_export_order(self, graph: Graph):
+        """Return nodes in draw order, with enclosing groups behind children."""
+        insertion_index = {
+            node_id: index for index, node_id in enumerate(graph.nodes)
+        }
+        enclosing_parents_by_child: Dict[str, List[str]] = {}
+        for edge in graph.edges:
+            if edge.connection_type != ConnectionType.ENCLOSING_GROUP:
+                continue
+            if edge.source_id not in graph.nodes or edge.target_id not in graph.nodes:
+                continue
+            enclosing_parents_by_child.setdefault(edge.target_id, []).append(edge.source_id)
+
+        depth_cache: Dict[str, int] = {}
+
+        def enclosing_depth(node_id: str, visiting: Set[str]) -> int:
+            if node_id in depth_cache:
+                return depth_cache[node_id]
+            if node_id in visiting:
+                return 0
+
+            parent_depths = [
+                enclosing_depth(parent_id, visiting | {node_id}) + 1
+                for parent_id in enclosing_parents_by_child.get(node_id, [])
+                if parent_id in graph.nodes
+            ]
+            depth_cache[node_id] = max(parent_depths, default=0)
+            return depth_cache[node_id]
+
+        return sorted(
+            graph.nodes.values(),
+            key=lambda node: (enclosing_depth(node.id, set()), insertion_index[node.id]),
+        )
+
+    def _apply_excalidraw_groups(
+        self,
+        graph: Graph,
+        elements: List[Dict[str, Any]],
+        node_element_map: Dict[str, str],
+        element_index_map: Dict[str, int],
+    ) -> None:
+        """Assign Excalidraw group IDs for configured group relationships."""
+        grouping_edges = [
+            edge
+            for edge in graph.edges
+            if edge.connection_type in {ConnectionType.GROUP, ConnectionType.ENCLOSING_GROUP}
+            and edge.source_id in graph.nodes
+            and edge.target_id in graph.nodes
+        ]
+        if not grouping_edges:
+            return
+
+        group_children_by_parent: Dict[str, List[str]] = {}
+        enclosing_children_by_parent: Dict[str, List[str]] = {}
+        enclosing_parents_by_child: Dict[str, List[str]] = {}
+        for edge in grouping_edges:
+            group_children_by_parent.setdefault(edge.source_id, []).append(edge.target_id)
+            if edge.connection_type == ConnectionType.ENCLOSING_GROUP:
+                enclosing_children_by_parent.setdefault(edge.source_id, []).append(edge.target_id)
+                enclosing_parents_by_child.setdefault(edge.target_id, []).append(edge.source_id)
+
+        insertion_index = {
+            node_id: index for index, node_id in enumerate(graph.nodes)
+        }
+
+        def enclosing_depth(node_id: str, visiting: Set[str]) -> int:
+            if node_id in visiting:
+                return 0
+            parent_depths = [
+                enclosing_depth(parent_id, visiting | {node_id}) + 1
+                for parent_id in enclosing_parents_by_child.get(node_id, [])
+            ]
+            return max(parent_depths, default=0)
+
+        text_elements_by_container_id: Dict[str, List[Dict[str, Any]]] = {}
+        for element in elements:
+            if element.get("type") != "text":
+                continue
+            container_id = element.get("containerId")
+            if container_id:
+                text_elements_by_container_id.setdefault(container_id, []).append(element)
+
+        def collect_group_descendants(node_id: str, seen: Set[str]) -> Set[str]:
+            if node_id in seen:
+                return set()
+            seen.add(node_id)
+
+            descendants = {node_id}
+            for child_id in group_children_by_parent.get(node_id, []):
+                descendants.update(collect_group_descendants(child_id, seen))
+            return descendants
+
+        def add_group_id_to_node(node_id: str, group_id: str) -> None:
+            element_id = node_element_map.get(node_id)
+            if not element_id or element_id not in element_index_map:
+                return
+
+            element = elements[element_index_map[element_id]]
+            self._append_group_id(element, group_id)
+            for text_element in text_elements_by_container_id.get(element_id, []):
+                self._append_group_id(text_element, group_id)
+
+        parent_ids = sorted(
+            group_children_by_parent,
+            key=lambda node_id: (enclosing_depth(node_id, set()), insertion_index[node_id]),
+        )
+        for parent_id in parent_ids:
+            group_id = self._generate_element_id()
+            member_ids = {parent_id}
+            for child_id in group_children_by_parent[parent_id]:
+                if parent_id in enclosing_children_by_parent:
+                    member_ids.update(collect_group_descendants(child_id, set()))
+                else:
+                    member_ids.add(child_id)
+
+            for node_id in sorted(member_ids, key=lambda value: insertion_index[value]):
+                add_group_id_to_node(node_id, group_id)
+
+    def _append_group_id(self, element: Dict[str, Any], group_id: str) -> None:
+        """Append a group ID once while preserving group hierarchy order."""
+        if "groupIds" not in element:
+            element["groupIds"] = []
+        if group_id not in element["groupIds"]:
+            element["groupIds"].append(group_id)
 
     def _create_rectangle(
         self,

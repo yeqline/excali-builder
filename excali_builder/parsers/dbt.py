@@ -221,6 +221,15 @@ class DbtManifestParser(BaseParser):
                 f"Conflicting dbt resource definitions for '{unique_id}' across manifests"
             )
 
+        for field in ("source_name", "schema", "database", "alias", "description", "path"):
+            if not existing.get(field) and resource.get(field):
+                existing[field] = resource[field]
+        if (
+            not existing.get("raw", {}).get("description")
+            and resource.get("raw", {}).get("description")
+        ):
+            existing["raw"] = resource["raw"]
+
     def _create_resource_node(self, resource: Dict[str, Any], source_order: int) -> Node:
         resource_type = resource["resource_type"]
         metadata = {
@@ -444,11 +453,11 @@ class DbtManifestParser(BaseParser):
 
         graph.add_node(Node(id=group_id, label=title, type="dbt_group", metadata=metadata))
         if parent_group_id:
-            self._add_container_edge(graph, parent_group_id, group_id)
+            self._add_group_edge(graph, parent_group_id, group_id)
 
         for index, member_ref in enumerate(group_spec["members"]):
             member_id = resolver.resolve(member_ref, f"group '{title}' member {index}")
-            self._add_container_edge(graph, group_id, member_id)
+            self._add_group_edge(graph, group_id, member_id)
 
         for child_group in group_spec["children"]:
             self._add_group(
@@ -462,12 +471,12 @@ class DbtManifestParser(BaseParser):
 
         return group_id
 
-    def _add_container_edge(self, graph: Graph, source_id: str, target_id: str) -> None:
+    def _add_group_edge(self, graph: Graph, source_id: str, target_id: str) -> None:
         graph.add_edge(
             Edge(
                 source_id=source_id,
                 target_id=target_id,
-                connection_type=ConnectionType.CONTAINER,
+                connection_type=ConnectionType.ENCLOSING_GROUP,
                 edge_type="group_member",
             )
         )
@@ -615,7 +624,7 @@ class DbtManifestParser(BaseParser):
                 Edge(
                     source_id=parent.id,
                     target_id=node_id,
-                    connection_type=ConnectionType.CONTAINER,
+                    connection_type=ConnectionType.GROUP,
                     edge_type="attachment",
                 )
             )
