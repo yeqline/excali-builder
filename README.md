@@ -175,6 +175,8 @@ Tree layout is the default. In Markdown, heading hierarchy is always structural 
 - **Group** (`connection_type: "group"`): No arrow is drawn. Parent and children are grouped in Excalidraw.
 - **Enclosing group** (`connection_type: "enclosing_group"`): No arrow is drawn. Parent and children are grouped in Excalidraw, and the parent node is resized to enclose its children.
 
+Line edge types can also define `max_length`. When a positioned line would be longer than that center-to-center distance, the arrow is omitted and the builder adds two generated `link` nodes, one near each endpoint. Those generated nodes have stable IDs, so moving them in Excalidraw is preserved through `positions.json`.
+
 In Markdown, there are also built-in `link` and `comment` node types:
 
 - a `link` node has one `target`
@@ -201,7 +203,8 @@ Example `edge_config.json`:
     "connection_type": "line",
     "color": "#DC2626",
     "stroke_width": 2,
-    "arrow_end": "arrow"
+    "arrow_end": "arrow",
+    "max_length": 1600
   }
 }
 ```

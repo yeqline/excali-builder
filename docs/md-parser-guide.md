@@ -44,7 +44,7 @@ If a used node type or edge type is missing from `node_config.json` or `edge_con
 - **`node_config.json` is styling only.** It answers: what should a node of type `concept` or `category` look like? This includes things like shape, colors, font size, padding, and border radius.
 - **Layout is built into the builder design.** Fresh builds always use the same tree layout. In Markdown, the layout follows heading hierarchy even when a nested built-in node renders with a different edge type such as `comment` or `link`.
 - **`parent_child` is the normal inferred hierarchy edge type in Markdown.** It comes from heading nesting and defines the default rendered hierarchy edge, but built-in child node types can swap that rendered edge type without changing tree placement.
-- **`edge_config.json` is mostly visual behavior.** It answers: should this edge draw an arrow, behave like a visual group, or resize a parent around children? For line-like edges, it also controls color, thickness, stroke style, and arrowheads.
+- **`edge_config.json` is mostly visual behavior.** It answers: should this edge draw an arrow, behave like a visual group, or resize a parent around children? For line-like edges, it also controls color, thickness, stroke style, arrowheads, and optional long-line replacement.
 - **`connection_type` is part of the builder design, not a user-invented concept.** Every edge type resolves to one of three built-in rendering modes:
   - `line`: draw a visible line or arrow between nodes
   - `group`: do not draw an arrow; group related nodes in Excalidraw
@@ -450,6 +450,7 @@ Defines styling and behavior for different edge types.
 - `stroke_style`: `"solid"`, `"dashed"`, `"dotted"`
 - `arrow_start`: `null`, `"arrow"`, `"circle"`
 - `arrow_end`: `null`, `"arrow"`, `"circle"`
+- `max_length`: Optional center-to-center maximum length in pixels. Longer positioned lines are replaced with two generated internal-link nodes whose positions are saved like normal nodes.
 
 ## Workflow
 

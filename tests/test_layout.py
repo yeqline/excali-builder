@@ -1331,6 +1331,134 @@ class LayoutRegressionTests(unittest.TestCase):
             f"https://excalidraw.com/topic?element={shapes['topic']['id']}",
         )
 
+    def test_long_line_edge_exports_as_two_internal_link_nodes(self):
+        graph = Graph()
+        source = Node(id="source", label="Source", x=0, y=0, width=120, height=60)
+        target = Node(id="target", label="Target", x=1000, y=0, width=120, height=60)
+        graph.add_node(source)
+        graph.add_node(target)
+        graph.add_edge(
+            Edge(
+                source_id="source",
+                target_id="target",
+                connection_type=ConnectionType.LINE,
+                edge_type="remote",
+            )
+        )
+        config = _build_explicit_config(
+            node_types=["default", "link"],
+            edge_types=["remote"],
+        )
+        config.edge_types["remote"].max_length = 300
+
+        builder = ExcaliBuilder()
+        generated_node_ids = builder._replace_long_line_edges_with_link_nodes(graph, config)
+        builder._position_long_line_link_nodes(graph, config, generated_node_ids)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "output.excalidraw"
+            ExcalidrawExporter().export(graph, config, str(output_path))
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+
+        shapes = {
+            element["customData"]["node_id"]: element
+            for element in data["elements"]
+            if element["type"] in {"rectangle", "ellipse", "diamond"}
+        }
+        arrows = [element for element in data["elements"] if element["type"] == "arrow"]
+        source_link_id, target_link_id = generated_node_ids
+
+        self.assertEqual(graph.edges, [])
+        self.assertEqual(arrows, [])
+        self.assertIn(source_link_id, shapes)
+        self.assertIn(target_link_id, shapes)
+        self.assertEqual(
+            shapes[source_link_id]["link"],
+            f"https://excalidraw.com/target?element={shapes['target']['id']}",
+        )
+        self.assertEqual(
+            shapes[target_link_id]["link"],
+            f"https://excalidraw.com/source?element={shapes['source']['id']}",
+        )
+
+    def test_long_line_link_nodes_reuse_saved_positions(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            edge = Edge(
+                source_id="source",
+                target_id="target",
+                connection_type=ConnectionType.LINE,
+                edge_type="remote",
+            )
+            source_link_id, _ = ExcaliBuilder()._get_long_line_link_node_ids(edge)
+
+            (folder / "config.json").write_text(
+                json.dumps({"parser_type": "csv"}),
+                encoding="utf-8",
+            )
+            (folder / "node.csv").write_text(
+                "\n".join(
+                    [
+                        "node_id,node_type,node_title,node_text",
+                        "source,default,Source,",
+                        "target,default,Target,",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (folder / "edge.csv").write_text(
+                "\n".join(
+                    [
+                        "from,to,edge_type,label",
+                        "source,target,remote,",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (folder / "edge_config.json").write_text(
+                json.dumps(
+                    {
+                        "remote": {
+                            "connection_type": "line",
+                            "color": "#2563EB",
+                            "stroke_width": 2,
+                            "stroke_style": "solid",
+                            "arrow_start": None,
+                            "arrow_end": "arrow",
+                            "max_length": 300,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (folder / "positions.json").write_text(
+                json.dumps(
+                    {
+                        "source": {"x": 0, "y": 0, "width": 120, "height": 60},
+                        "target": {"x": 1000, "y": 0, "width": 120, "height": 60},
+                        source_link_id: {"x": 333, "y": 444, "width": 140, "height": 50},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_path = ExcaliBuilder().build_from_folder(str(folder))
+            data = json.loads(Path(output_path).read_text(encoding="utf-8"))
+
+        shapes = {
+            element["customData"]["node_id"]: element
+            for element in data["elements"]
+            if element["type"] in {"rectangle", "ellipse", "diamond"}
+        }
+        arrows = [element for element in data["elements"] if element["type"] == "arrow"]
+
+        self.assertEqual(arrows, [])
+        self.assertEqual((shapes[source_link_id]["x"], shapes[source_link_id]["y"]), (333, 444))
+        self.assertEqual(
+            (shapes[source_link_id]["width"], shapes[source_link_id]["height"]),
+            (140, 50),
+        )
+
     def test_full_refresh_rebuilds_tree_layout_but_keeps_saved_sizes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             folder = Path(tmp_dir)

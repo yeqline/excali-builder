@@ -1,13 +1,16 @@
 """Main builder class for creating Excalidraw diagrams from source files."""
 
+import hashlib
 import json
+import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .config.loader import ConfigLoader
 from .config.schema import GlobalConfig
-from .core.edge import ConnectionType
+from .core.edge import ConnectionType, Edge
 from .core.graph import Graph
+from .core.node import Node
 from .excalidraw.exporter import ExcalidrawExporter
 from .excalidraw.sync import ExcalidrawSync
 from .layout.dag import DagLayout
@@ -74,7 +77,21 @@ class ExcaliBuilder:
         # 5. For new nodes (without positions), apply deterministic tree layout
         self._apply_layout_to_new_nodes(graph, config)
 
-        # 6. Export to Excalidraw JSON
+        # 6. Replace configured overlong line edges with local jump links.
+        generated_link_node_ids = self._replace_long_line_edges_with_link_nodes(graph, config)
+        if generated_link_node_ids:
+            ConfigLoader.ensure_graph_config(folder, graph)
+            config = ConfigLoader.load_from_folder(folder)
+            ConfigLoader.apply_config_to_graph(graph, config)
+            self._apply_saved_geometry_to_nodes(
+                graph,
+                positions_data,
+                generated_link_node_ids,
+                full_refresh=full_refresh,
+            )
+            self._position_long_line_link_nodes(graph, config, generated_link_node_ids)
+
+        # 7. Export to Excalidraw JSON
         output_path = folder / "output.excalidraw"
         self.exporter.export(graph, config, str(output_path))
 
@@ -110,33 +127,59 @@ class ExcaliBuilder:
                 continue
 
             node = graph.nodes[node_id]
-            if not full_refresh:
-                node.x = geometry.get("x")
-                node.y = geometry.get("y")
-            node.width = geometry.get("width")
-            node.height = geometry.get("height")
+            self._apply_saved_geometry_to_node(node, geometry, full_refresh=full_refresh)
 
-            if node.metadata is None:
-                node.metadata = {}
-            if "textAlign" in geometry:
-                node.metadata["text_align"] = geometry["textAlign"]
-            if "verticalAlign" in geometry:
-                node.metadata["vertical_align"] = geometry["verticalAlign"]
-            if "fontSize" in geometry:
-                node.metadata["font_size"] = geometry["fontSize"]
-            if "wrapped_text" in geometry:
-                node.metadata["saved_wrapped_text"] = geometry["wrapped_text"]
-            if "wrapped_original_text" in geometry:
-                node.metadata["saved_wrapped_original_text"] = geometry["wrapped_original_text"]
-            if not full_refresh:
-                if "text_x" in geometry:
-                    node.metadata["text_x"] = geometry["text_x"]
-                if "text_y" in geometry:
-                    node.metadata["text_y"] = geometry["text_y"]
-                if "text_width" in geometry:
-                    node.metadata["text_width"] = geometry["text_width"]
-                if "text_height" in geometry:
-                    node.metadata["text_height"] = geometry["text_height"]
+    def _apply_saved_geometry_to_nodes(
+        self,
+        graph: Graph,
+        positions_data: Dict[str, Dict[str, Any]],
+        node_ids: Sequence[str],
+        full_refresh: bool = False,
+    ) -> None:
+        """Apply saved geometry to a subset of graph nodes."""
+        for node_id in node_ids:
+            if node_id not in graph.nodes or node_id not in positions_data:
+                continue
+            self._apply_saved_geometry_to_node(
+                graph.nodes[node_id],
+                positions_data[node_id],
+                full_refresh=full_refresh,
+            )
+
+    def _apply_saved_geometry_to_node(
+        self,
+        node: Node,
+        geometry: Dict[str, Any],
+        full_refresh: bool = False,
+    ) -> None:
+        """Apply saved geometry to one graph node."""
+        if not full_refresh:
+            node.x = geometry.get("x")
+            node.y = geometry.get("y")
+        node.width = geometry.get("width")
+        node.height = geometry.get("height")
+
+        if node.metadata is None:
+            node.metadata = {}
+        if "textAlign" in geometry:
+            node.metadata["text_align"] = geometry["textAlign"]
+        if "verticalAlign" in geometry:
+            node.metadata["vertical_align"] = geometry["verticalAlign"]
+        if "fontSize" in geometry:
+            node.metadata["font_size"] = geometry["fontSize"]
+        if "wrapped_text" in geometry:
+            node.metadata["saved_wrapped_text"] = geometry["wrapped_text"]
+        if "wrapped_original_text" in geometry:
+            node.metadata["saved_wrapped_original_text"] = geometry["wrapped_original_text"]
+        if not full_refresh:
+            if "text_x" in geometry:
+                node.metadata["text_x"] = geometry["text_x"]
+            if "text_y" in geometry:
+                node.metadata["text_y"] = geometry["text_y"]
+            if "text_width" in geometry:
+                node.metadata["text_width"] = geometry["text_width"]
+            if "text_height" in geometry:
+                node.metadata["text_height"] = geometry["text_height"]
 
     def _apply_layout_to_new_nodes(self, graph: Graph, config: GlobalConfig) -> None:
         """Apply tree layout to nodes that do not already have positions."""
@@ -254,3 +297,180 @@ class ExcaliBuilder:
 
         for parent_id in sorted(children_by_parent):
             place_parent(parent_id)
+
+    def _replace_long_line_edges_with_link_nodes(
+        self,
+        graph: Graph,
+        config: GlobalConfig,
+    ) -> List[str]:
+        """Replace configured overlong line edges with two internal link nodes."""
+        generated_node_ids: List[str] = []
+        retained_edges: List[Edge] = []
+
+        for edge in graph.edges:
+            if not self._should_replace_line_edge(graph, config, edge):
+                retained_edges.append(edge)
+                continue
+
+            source_node = graph.nodes[edge.source_id]
+            target_node = graph.nodes[edge.target_id]
+            source_link_id, target_link_id = self._get_long_line_link_node_ids(edge)
+            self._add_long_line_link_node(
+                graph,
+                source_link_id,
+                anchor_node=source_node,
+                target_node=target_node,
+                edge=edge,
+                side="source",
+            )
+            self._add_long_line_link_node(
+                graph,
+                target_link_id,
+                anchor_node=target_node,
+                target_node=source_node,
+                edge=edge,
+                side="target",
+            )
+            generated_node_ids.extend([source_link_id, target_link_id])
+
+        graph.edges = retained_edges
+        return generated_node_ids
+
+    def _should_replace_line_edge(
+        self,
+        graph: Graph,
+        config: GlobalConfig,
+        edge: Edge,
+    ) -> bool:
+        """Return whether a line edge exceeds its configured maximum length."""
+        if edge.connection_type != ConnectionType.LINE:
+            return False
+        if edge.source_id not in graph.nodes or edge.target_id not in graph.nodes:
+            return False
+
+        edge_config = ConfigLoader.get_edge_type_config(config, edge.edge_type)
+        if not edge_config or edge_config.max_length is None:
+            return False
+        if edge_config.max_length <= 0:
+            return False
+
+        source_node = graph.nodes[edge.source_id]
+        target_node = graph.nodes[edge.target_id]
+        if source_node.x is None or source_node.y is None:
+            return False
+        if target_node.x is None or target_node.y is None:
+            return False
+
+        return self._center_distance(source_node, target_node) > edge_config.max_length
+
+    def _add_long_line_link_node(
+        self,
+        graph: Graph,
+        node_id: str,
+        anchor_node: Node,
+        target_node: Node,
+        edge: Edge,
+        side: str,
+    ) -> None:
+        """Add one generated internal-link node for an overlong line edge."""
+        if node_id in graph.nodes:
+            return
+
+        graph.add_node(
+            Node(
+                id=node_id,
+                label=f"To {target_node.label}",
+                type="link",
+                metadata={
+                    "target": f"#{target_node.id}",
+                    "long_line_anchor_id": anchor_node.id,
+                    "long_line_target_id": target_node.id,
+                    "long_line_edge_type": edge.edge_type,
+                    "long_line_side": side,
+                    "source_order": len(graph.nodes),
+                },
+            )
+        )
+
+    def _position_long_line_link_nodes(
+        self,
+        graph: Graph,
+        config: GlobalConfig,
+        node_ids: Sequence[str],
+    ) -> None:
+        """Measure and place generated long-line link nodes that lack positions."""
+        for node_id in node_ids:
+            node = graph.nodes.get(node_id)
+            if not node:
+                continue
+
+            if node.width is None or node.height is None:
+                node_config = ConfigLoader.get_node_config(config, node.type)
+                measured_width, measured_height = self.exporter.measure_node(node, node_config)
+                if node.width is None:
+                    node.width = measured_width
+                if node.height is None:
+                    node.height = measured_height
+
+            if node.x is not None and node.y is not None:
+                continue
+
+            anchor_id = (node.metadata or {}).get("long_line_anchor_id")
+            target_id = (node.metadata or {}).get("long_line_target_id")
+            if anchor_id not in graph.nodes or target_id not in graph.nodes:
+                continue
+
+            anchor_node = graph.nodes[anchor_id]
+            target_node = graph.nodes[target_id]
+            node.x, node.y = self._default_long_line_link_position(
+                node,
+                anchor_node,
+                target_node,
+            )
+
+    def _default_long_line_link_position(
+        self,
+        link_node: Node,
+        anchor_node: Node,
+        target_node: Node,
+    ) -> Tuple[float, float]:
+        """Place a generated link node near the anchor, facing the remote node."""
+        anchor_center_x, anchor_center_y = self._node_center(anchor_node)
+        target_center_x, target_center_y = self._node_center(target_node)
+        dx = target_center_x - anchor_center_x
+        dy = target_center_y - anchor_center_y
+        distance = math.hypot(dx, dy) or 1.0
+        unit_x = dx / distance
+        unit_y = dy / distance
+
+        anchor_width = anchor_node.width or 100
+        anchor_height = anchor_node.height or 50
+        link_width = link_node.width or 100
+        link_height = link_node.height or 50
+        offset = max(anchor_width, anchor_height) / 2 + 48
+
+        center_x = anchor_center_x + unit_x * offset
+        center_y = anchor_center_y + unit_y * offset
+        return center_x - link_width / 2, center_y - link_height / 2
+
+    def _center_distance(self, source_node: Node, target_node: Node) -> float:
+        """Return center-to-center distance between two positioned nodes."""
+        source_x, source_y = self._node_center(source_node)
+        target_x, target_y = self._node_center(target_node)
+        return math.hypot(target_x - source_x, target_y - source_y)
+
+    def _node_center(self, node: Node) -> Tuple[float, float]:
+        """Return node center using current geometry."""
+        return (
+            (node.x or 0) + (node.width or 100) / 2,
+            (node.y or 0) + (node.height or 50) / 2,
+        )
+
+    def _get_long_line_link_node_ids(self, edge: Edge) -> Tuple[str, str]:
+        """Return stable generated node IDs for one overlong line edge."""
+        key = f"{edge.edge_type}\n{edge.source_id}\n{edge.target_id}"
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        return (
+            f"long_line_link.{digest}.source",
+            f"long_line_link.{digest}.target",
+        )

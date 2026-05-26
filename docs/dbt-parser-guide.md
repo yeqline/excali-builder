@@ -230,3 +230,5 @@ dbt lineage is a DAG, so dbt diagrams should usually use:
 ```
 
 The DAG layout ranks nodes by `lineage` edges, places upstream resources before downstream resources, and preserves saved geometry from `positions.json`. Existing Markdown and CSV diagrams continue to use tree layout unless `layout.algorithm` is set to another value.
+
+For large lineage diagrams, `lineage` can define `max_length` in `edge_config.json`. Any lineage arrow longer than that center-to-center distance is replaced with two generated internal-link nodes, one near each endpoint, and those link nodes can be moved and synced like normal nodes.

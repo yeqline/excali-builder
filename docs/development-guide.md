@@ -16,6 +16,7 @@ The system distinguishes three rendering behaviors for connections:
    - Represent relationships between nodes
    - Rendered as arrows/lines in Excalidraw
    - Can have arrowheads, different colors, styles
+   - Can define `max_length` to replace overlong arrows with two generated internal-link nodes
    - Example: A dependency arrow between services
 
 2. **Group connections** (`connection_type: "group"`):
@@ -110,7 +111,7 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 - `node_config.json`: Styling per node type
 - `edge_config.json`: Styling and connection_type per edge type
 
-**Design decision**: `edge_config.json` defines `connection_type` per edge_type. Markdown and CSV structural layout follows heading hierarchy or `parent_child` edges. `enclosing_group` then adjusts parent bounds around children after the base layout has run.
+**Design decision**: `edge_config.json` defines `connection_type` per edge_type. Markdown and CSV structural layout follows heading hierarchy or `parent_child` edges. `enclosing_group` then adjusts parent bounds around children after the base layout has run. For line edges with `max_length`, overlong arrows are replaced after layout with deterministic `link` nodes so their moved positions can be synced like any other generated node.
 
 #### `layout/` - Positioning
 

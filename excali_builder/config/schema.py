@@ -38,6 +38,7 @@ class EdgeTypeConfig(BaseModel):
     arrow_start: Optional[str] = None  # "arrow", "circle", None
     arrow_end: Optional[str] = None  # "arrow", "circle", None
     group_padding: Optional[int] = None
+    max_length: Optional[float] = None
 
 
 class LayoutConfig(BaseModel):

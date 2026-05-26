@@ -196,7 +196,8 @@ For edge types with `"connection_type": "line"`:
     "stroke_width": 3,
     "stroke_style": "solid",
     "arrow_start": null,
-    "arrow_end": "arrow"
+    "arrow_end": "arrow",
+    "max_length": 1600
   },
   "link": {
     "connection_type": "line",
@@ -226,12 +227,14 @@ For edge types with `"connection_type": "line"`:
   - `null`: No arrowhead
   - `"arrow"`: Standard arrowhead (default)
   - `"circle"`: Circular arrowhead
+- `max_length`: Optional center-to-center maximum length in pixels. Longer positioned lines are replaced with two generated internal-link nodes.
 
 **Line Connection Behavior:**
 
 - Line connections create arrows between nodes
 - Arrows are bound to nodes, so they move together when nodes are moved
 - Arrow endpoints automatically connect to node edges
+- Generated long-line link nodes use stable IDs and persist moved positions in `positions.json`
 
 ## Workflow
 
