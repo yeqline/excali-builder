@@ -1,14 +1,15 @@
 # Excali-Builder
 
-A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from structured data (CSV, Markdown, or dbt manifest files) with persistent layout.
+A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from direct graphs, CSV, Markdown, or dbt manifest files with persistent layout.
 
 ## Why?
 
-- **Version control your diagrams**: Keep diagram content in text files (CSV/Markdown), track changes with git
+- **Version control your diagrams**: Keep diagram content in JSON, CSV, or Markdown, and track changes with git
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
-- **Simple initial layout**: Fresh builds use deterministic tree or DAG layout
+- **Deterministic initial layout**: Fresh builds use free-form, tree, or DAG placement
 - **Multiple rendering modes for edges**: Draw arrows with `line`, visually group nodes with `group`, or draw enclosing groups with `enclosing_group`
+- **Visible relationship labels**: Render non-empty line-edge labels by default, with per-type styling and opt-out
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
 - **Markdown image attachments**: Keep standard `![alt](path)` images in `.md` previews and render them as attached Excalidraw images
 - **Built-in procedures and ordered steps**: Model long step-by-step flows without abusing heading depth
@@ -32,13 +33,13 @@ The intended workflow is an AI-assisted editing loop:
 3. Open the local viewer URL printed by the command.
 4. Review the generated Excalidraw map in the browser.
 5. Reposition or resize nodes directly in the viewer; layout saves automatically to `positions.json`.
-6. Ask the AI agent to edit the Markdown, CSV, or config files while `serve` keeps running.
+6. Ask the AI agent to edit `graph.json`, Markdown, CSV, or config files while `serve` keeps running.
 7. The server rebuilds automatically and the viewer refreshes without a manual reload or separate build command.
 
 In this loop, source files are the durable content model and the browser is the durable layout editor. Use the AI agent for titles, body text, relationships, node types, and styling config; use the local viewer for spatial review and layout adjustments.
 
 ```
-AI edits Markdown/CSV/config ──► serve rebuilds ──► local Excalidraw viewer
+AI edits graph/Markdown/CSV/config ──► serve rebuilds ──► local Excalidraw viewer
           ▲                                               │
           │                                               ▼
           └──────────── positions.json ◄── layout saves from viewer
@@ -53,7 +54,7 @@ uv run excali-builder serve path/to/your-diagram-folder
 uv run excali-builder serve path/to/your-diagram-folder --port 0 --no-open
 ```
 
-Watched files are top-level `*.md`, `*.csv`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. For dbt diagrams, configured manifest and overlay files are watched too, even when manifests live outside the visualization folder. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
+Watched files are top-level `*.md`, `*.csv`, `graph.json`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. For dbt diagrams, configured manifest and overlay files are watched too, even when manifests live outside the visualization folder. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
 
 Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
 
@@ -74,6 +75,20 @@ uv run excali-builder --full-refresh path/to/your-diagram-folder
 A normal one-shot build syncs layout from any existing `output.excalidraw`, then regenerates the diagram. `serve` uses the same sync/build contract but keeps it running continuously.
 
 ## Input Formats
+
+### Direct Free-form Graph
+
+```text
+your-diagram/
+├── graph.json          # Versioned nodes and edges
+├── node_config.json    # Styling per node type
+├── edge_config.json    # Styling per edge type
+├── config.json         # {"parser_type": "graph"}
+├── positions.json      # Generated and manually edited node geometry
+└── output.excalidraw   # Generated output
+```
+
+The direct graph format makes no hierarchy, sequence, lineage, root, or acyclicity assumptions. Every edge has a stable ID and can connect any two declared nodes, including itself. See the [Free-form Graph Guide](docs/freeform-graph-guide.md).
 
 ### CSV Format
 
@@ -160,7 +175,7 @@ The current flow uses this diagram ![Flow](media/flow.png) during rollouts.
 
 Used node and edge types are always made explicit in config files. If a build encounters a missing type such as `image`, `attachment`, `comment`, or `next`, it adds a starter entry to `node_config.json` or `edge_config.json` and then reloads config from disk before layout and export. That means the folder config becomes the visible source of truth for rendering.
 
-Tree layout is the default. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
+Tree layout is the default for existing formats. Direct graphs default to free-form placement. In Markdown, heading hierarchy is always structural even when a built-in child node uses a different rendered edge type:
 
 - In Markdown, normal nested nodes get an inferred `parent_child` edge from heading nesting.
 - Nested `type: link` nodes keep the same placement but use the built-in `link` edge style unless you declare explicit `link:` edges.
@@ -174,6 +189,8 @@ Tree layout is the default. In Markdown, heading hierarchy is always structural 
 - **Line** (`connection_type: "line"`): Draws arrows/lines between nodes.
 - **Group** (`connection_type: "group"`): No arrow is drawn. Parent and children are grouped in Excalidraw.
 - **Enclosing group** (`connection_type: "enclosing_group"`): No arrow is drawn. Parent and children are grouped in Excalidraw, and the parent node is resized to enclose its children.
+
+Non-empty labels on line edges are rendered by default. Edge types can set `show_label`, `label_color`, and `label_font_size`. Group and enclosing-group relationships do not render labels.
 
 Line edge types can also define `max_length`. When a positioned line would be longer than that center-to-center distance, the arrow is omitted and the builder adds two generated `link` nodes, one near each endpoint. Those generated nodes have stable IDs, so moving them in Excalidraw is preserved through `positions.json`.
 
@@ -225,6 +242,7 @@ Example `config.json`:
 
 ## Documentation
 
+- [Free-form Graph Guide](docs/freeform-graph-guide.md) — How to define unrestricted nodes and edges in `graph.json`
 - [CSV Parser Guide](docs/csv-parser-guide.md) — How to use CSV files
 - [Markdown Parser Guide](docs/md-parser-guide.md) — How to use Markdown files
 - [Markdown Flow Guide](docs/markdown-flow-guide.md) — How to create arbitrary workflows with multiple H1 nodes and explicit edges

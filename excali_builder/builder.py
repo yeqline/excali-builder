@@ -12,11 +12,15 @@ from .core.edge import ConnectionType, Edge
 from .core.graph import Graph
 from .core.node import Node
 from .excalidraw.exporter import ExcalidrawExporter
+from .excalidraw.importer import ExcalidrawImporter
+from .excalidraw.positions import merge_positions
 from .excalidraw.sync import ExcalidrawSync
 from .layout.dag import DagLayout
+from .layout.freeform import FreeformLayout
 from .layout.tree import TreeLayout
 from .parsers.csv import CSVParser
 from .parsers.dbt import DbtManifestParser
+from .parsers.graph import GraphJsonParser
 from .parsers.markdown import MarkdownParser
 from .parsers.registry import ParserRegistry
 
@@ -28,22 +32,31 @@ class ExcaliBuilder:
         """Initialize the builder with parser registry and exporter."""
         self.parser_registry = ParserRegistry()
         self.exporter = ExcalidrawExporter()
+        self.importer = ExcalidrawImporter()
         self.sync = ExcalidrawSync()
 
         # Register default parsers
         self.parser_registry.register("csv", CSVParser)
         self.parser_registry.register("dbt", DbtManifestParser)
         self.parser_registry.register("manifest", DbtManifestParser)
+        self.parser_registry.register("graph", GraphJsonParser)
         self.parser_registry.register("md", MarkdownParser)
         self.parser_registry.register("markdown", MarkdownParser)
 
-    def build_from_folder(self, folder_path: str, full_refresh: bool = False) -> str:
+    def build_from_folder(
+        self,
+        folder_path: str,
+        full_refresh: bool = False,
+        placement_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Build Excalidraw diagram from source files in folder.
 
         Args:
             folder_path: Source folder containing config and content files.
             full_refresh: When True, ignore saved x/y positions and rebuild layout
                 from scratch while still reusing saved sizes and text alignment.
+            placement_context: Optional live-canvas point used for unconnected new
+                nodes by placement algorithms that support it.
         """
         folder = Path(folder_path)
 
@@ -51,11 +64,16 @@ class ExcaliBuilder:
         config_path = folder / "config.json"
         parser_type = "csv"  # default
         parser_options: Dict[str, Any] = {}
+        layout_algorithm_is_explicit = False
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
                 parser_type = config_data.get("parser_type", "csv")
                 parser_options = config_data.get("parser_options", {})
+                layout_data = config_data.get("layout", {})
+                layout_algorithm_is_explicit = (
+                    isinstance(layout_data, dict) and "algorithm" in layout_data
+                )
                 if not isinstance(parser_options, dict):
                     raise ValueError("config.json field 'parser_options' must be an object")
 
@@ -66,16 +84,23 @@ class ExcaliBuilder:
 
         parser = parser_class()
         graph = parser.parse(folder, parser_options)
+        self._ensure_stable_edge_ids(graph)
 
         # 3. Load configuration
         config = ConfigLoader.load_from_folder(folder)
+        if parser_type == "graph" and not layout_algorithm_is_explicit:
+            config.layout.algorithm = "freeform"
 
         # 4. Load positions.json from folder if exists
         positions_data = self._load_positions_data(folder)
         self._apply_saved_geometry(graph, positions_data, full_refresh=full_refresh)
 
-        # 5. For new nodes (without positions), apply deterministic tree layout
-        self._apply_layout_to_new_nodes(graph, config)
+        # 5. For new nodes (without positions), apply the configured layout.
+        self._apply_layout_to_new_nodes(
+            graph,
+            config,
+            placement_context=placement_context,
+        )
 
         # 6. Replace configured overlong line edges with local jump links.
         generated_link_node_ids = self._replace_long_line_edges_with_link_nodes(graph, config)
@@ -94,6 +119,14 @@ class ExcaliBuilder:
         # 7. Export to Excalidraw JSON
         output_path = folder / "output.excalidraw"
         self.exporter.export(graph, config, str(output_path))
+        if parser_type == "graph":
+            self._persist_new_layout(
+                folder,
+                output_path,
+                graph,
+                positions_data,
+                full_refresh=full_refresh,
+            )
 
         return str(output_path)
 
@@ -101,6 +134,39 @@ class ExcaliBuilder:
         """Sync positions from Excalidraw file to positions.json."""
         folder = Path(folder_path)
         self.sync.sync_from_folder(folder)
+
+    def _ensure_stable_edge_ids(self, graph: Graph) -> None:
+        """Assign deterministic IDs to producer edges that do not declare one."""
+        seen_ids: Set[str] = set()
+        occurrence_by_key: Dict[str, int] = {}
+
+        for edge in graph.edges:
+            if edge.id:
+                if edge.id in seen_ids:
+                    raise ValueError(f"Duplicate edge ID: {edge.id}")
+                seen_ids.add(edge.id)
+                continue
+
+            key = json.dumps(
+                [
+                    edge.edge_type,
+                    edge.source_id,
+                    edge.target_id,
+                    edge.label,
+                    edge.metadata,
+                ],
+                sort_keys=True,
+                default=str,
+            )
+            occurrence = occurrence_by_key.get(key, 0)
+            occurrence_by_key[key] = occurrence + 1
+            digest = hashlib.sha1(
+                f"{key}\n{occurrence}".encode("utf-8")
+            ).hexdigest()[:16]
+            edge.id = f"edge.{digest}"
+            if edge.id in seen_ids:
+                raise ValueError(f"Generated duplicate edge ID: {edge.id}")
+            seen_ids.add(edge.id)
 
     def _load_positions_data(self, folder: Path) -> Dict[str, Dict[str, Any]]:
         """Load saved node geometry from positions.json if it exists."""
@@ -181,8 +247,13 @@ class ExcaliBuilder:
             if "text_height" in geometry:
                 node.metadata["text_height"] = geometry["text_height"]
 
-    def _apply_layout_to_new_nodes(self, graph: Graph, config: GlobalConfig) -> None:
-        """Apply tree layout to nodes that do not already have positions."""
+    def _apply_layout_to_new_nodes(
+        self,
+        graph: Graph,
+        config: GlobalConfig,
+        placement_context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Apply the configured layout to nodes without saved positions."""
         for node in graph.nodes.values():
             if node.width is None or node.height is None:
                 node_config = ConfigLoader.get_node_config(config, node.type)
@@ -204,6 +275,7 @@ class ExcaliBuilder:
                 "start_x": config.layout.start_x,
                 "start_y": config.layout.start_y,
                 "rank_edge_types": config.layout.rank_edge_types,
+                "placement_anchor": placement_context,
             }
 
             algorithm = (config.layout.algorithm or "tree").strip().lower()
@@ -211,10 +283,52 @@ class ExcaliBuilder:
                 TreeLayout().apply_layout(graph, layout_config)
             elif algorithm == "dag":
                 DagLayout().apply_layout(graph, layout_config)
+            elif algorithm == "freeform":
+                FreeformLayout().apply_layout(graph, layout_config)
             else:
                 raise ValueError(f"Unknown layout algorithm: {config.layout.algorithm}")
 
         self._apply_enclosing_group_layout(graph, config)
+
+    def _persist_new_layout(
+        self,
+        folder: Path,
+        output_path: Path,
+        graph: Graph,
+        positions_data: Dict[str, Dict[str, Any]],
+        full_refresh: bool,
+    ) -> None:
+        """Persist first-build and newly generated node geometry."""
+        positions_path = folder / "positions.json"
+        if full_refresh:
+            node_ids = set(graph.nodes)
+        else:
+            node_ids = {
+                node_id
+                for node_id in graph.nodes
+                if not self._has_complete_saved_geometry(positions_data.get(node_id))
+            }
+        if not node_ids:
+            if not positions_path.exists():
+                positions_path.write_text("{}\n", encoding="utf-8")
+            return
+
+        generated_positions = self.importer.import_positions(output_path)
+        positions_to_merge = {
+            node_id: geometry
+            for node_id, geometry in generated_positions.items()
+            if node_id in node_ids
+        }
+        merge_positions(positions_path, positions_to_merge)
+
+    def _has_complete_saved_geometry(self, geometry: Optional[Dict[str, Any]]) -> bool:
+        """Return whether a saved position has the required node geometry."""
+        if not isinstance(geometry, dict):
+            return False
+        return all(
+            geometry.get(field) is not None
+            for field in ("x", "y", "width", "height")
+        )
 
     def _apply_enclosing_group_layout(self, graph: Graph, config: GlobalConfig) -> None:
         """Resize enclosing group parents around their positioned children."""

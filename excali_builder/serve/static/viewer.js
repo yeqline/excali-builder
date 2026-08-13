@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Excalidraw } from "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/dev/index.js?external=react,react-dom";
 
 const SAVE_DEBOUNCE_MS = 800;
+const PLACEMENT_CONTEXT_DEBOUNCE_MS = 250;
 
 function normalizeScene(scene, preserveAppState) {
   const nextAppState = {
@@ -39,6 +40,9 @@ function App() {
   const [detail, setDetail] = useState("");
   const [api, setApi] = useState(null);
   const saveTimerRef = useRef(null);
+  const placementTimerRef = useRef(null);
+  const pointerRef = useRef(null);
+  const appStateRef = useRef(null);
   const applyingRemoteRef = useRef(false);
   const hasMountedSceneRef = useRef(false);
   const lastLayoutSignatureRef = useRef("");
@@ -134,8 +138,42 @@ function App() {
     setDetail(payload.saved_count ? `(${payload.saved_count})` : "");
   }, []);
 
+  const sendPlacementContext = useCallback(async () => {
+    const viewportCenter = getViewportCenter(appStateRef.current);
+    const payload = {
+      pointer: pointerRef.current,
+      viewport_center: viewportCenter,
+    };
+    if (!payload.pointer && !payload.viewport_center) {
+      return;
+    }
+    const response = await fetch("/placement-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || `placement context failed: ${response.status}`);
+    }
+  }, []);
+
+  const schedulePlacementContext = useCallback(
+    (appState) => {
+      if (appState) {
+        appStateRef.current = appState;
+      }
+      window.clearTimeout(placementTimerRef.current);
+      placementTimerRef.current = window.setTimeout(() => {
+        sendPlacementContext().catch((error) => console.error(error));
+      }, PLACEMENT_CONTEXT_DEBOUNCE_MS);
+    },
+    [sendPlacementContext],
+  );
+
   const handleChange = useCallback(
-    (elements) => {
+    (elements, appState) => {
+      schedulePlacementContext(appState);
       if (!hasMountedSceneRef.current || applyingRemoteRef.current) {
         return;
       }
@@ -153,11 +191,43 @@ function App() {
         });
       }, SAVE_DEBOUNCE_MS);
     },
-    [saveLayout],
+    [saveLayout, schedulePlacementContext],
   );
 
+  const handlePointerUpdate = useCallback(
+    (payload) => {
+      pointerRef.current = payload?.pointer || null;
+      const currentAppState = api?.getAppState ? api.getAppState() : null;
+      schedulePlacementContext(currentAppState);
+    },
+    [api, schedulePlacementContext],
+  );
+
+  const handleCanvasPointer = useCallback(
+    (event) => {
+      const currentAppState = api?.getAppState
+        ? api.getAppState()
+        : appStateRef.current;
+      pointerRef.current = getScenePoint(
+        event.clientX,
+        event.clientY,
+        currentAppState,
+      );
+      schedulePlacementContext(currentAppState);
+    },
+    [api, schedulePlacementContext],
+  );
+
+  const handleScrollChange = useCallback(() => {
+    const currentAppState = api?.getAppState ? api.getAppState() : null;
+    schedulePlacementContext(currentAppState);
+  }, [api, schedulePlacementContext]);
+
   useEffect(() => {
-    return () => window.clearTimeout(saveTimerRef.current);
+    return () => {
+      window.clearTimeout(saveTimerRef.current);
+      window.clearTimeout(placementTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -185,11 +255,17 @@ function App() {
     React.createElement(Status, { status, detail }),
     React.createElement(
       "div",
-      { className: "viewer-canvas" },
+      {
+        className: "viewer-canvas",
+        onPointerDown: handleCanvasPointer,
+        onPointerMove: handleCanvasPointer,
+      },
       React.createElement(Excalidraw, {
         initialData: scene,
         excalidrawAPI: setApi,
         onChange: handleChange,
+        onPointerUpdate: handlePointerUpdate,
+        onScrollChange: handleScrollChange,
         autoFocus: true,
         theme: "light",
         UIOptions: {
@@ -200,6 +276,38 @@ function App() {
       }),
     ),
   );
+}
+
+function getViewportCenter(appState) {
+  if (!appState) {
+    return null;
+  }
+  const zoom = appState.zoom?.value || 1;
+  const width = appState.width || window.innerWidth;
+  const height = appState.height || window.innerHeight;
+  const offsetLeft = appState.offsetLeft || 0;
+  const offsetTop = appState.offsetTop || 0;
+  const scrollX = appState.scrollX || 0;
+  const scrollY = appState.scrollY || 0;
+  return {
+    x: (width / 2 - offsetLeft) / zoom - scrollX,
+    y: (height / 2 - offsetTop) / zoom - scrollY,
+  };
+}
+
+function getScenePoint(clientX, clientY, appState) {
+  if (!appState || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+  const zoom = appState.zoom?.value || 1;
+  const offsetLeft = appState.offsetLeft || 0;
+  const offsetTop = appState.offsetTop || 0;
+  const scrollX = appState.scrollX || 0;
+  const scrollY = appState.scrollY || 0;
+  return {
+    x: (clientX - offsetLeft) / zoom - scrollX,
+    y: (clientY - offsetTop) / zoom - scrollY,
+  };
 }
 
 function layoutSignature(elements) {

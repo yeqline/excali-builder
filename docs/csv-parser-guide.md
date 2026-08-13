@@ -55,7 +55,7 @@ Defines connections between nodes. Required columns:
 - `from`: Source node ID (must match a `node_id` in `node.csv`)
 - `to`: Target node ID (must match a `node_id` in `node.csv`)
 - `edge_type`: Type of edge (used for styling and connection type lookup in `edge_config.json`)
-- `label`: Optional label text for the edge (currently not displayed, reserved for future use)
+- `label`: Optional label text rendered on line connections by default
 
 **Example:**
 
@@ -228,6 +228,9 @@ For edge types with `"connection_type": "line"`:
   - `"arrow"`: Standard arrowhead (default)
   - `"circle"`: Circular arrowhead
 - `max_length`: Optional center-to-center maximum length in pixels. Longer positioned lines are replaced with two generated internal-link nodes.
+- `show_label`: Whether non-empty edge labels are rendered. Defaults to `true`.
+- `label_color`: Label color. Defaults to the line color when omitted or `null`.
+- `label_font_size`: Label font size. Defaults to `14`.
 
 **Line Connection Behavior:**
 

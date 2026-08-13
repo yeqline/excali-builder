@@ -451,6 +451,9 @@ Defines styling and behavior for different edge types.
 - `arrow_start`: `null`, `"arrow"`, `"circle"`
 - `arrow_end`: `null`, `"arrow"`, `"circle"`
 - `max_length`: Optional center-to-center maximum length in pixels. Longer positioned lines are replaced with two generated internal-link nodes whose positions are saved like normal nodes.
+- `show_label`: Whether non-empty line-edge labels are rendered. Defaults to `true`.
+- `label_color`: Label color. Defaults to the line color when omitted or `null`.
+- `label_font_size`: Label font size. Defaults to `14`.
 
 ## Workflow
 

@@ -26,6 +26,9 @@ class LineConnectionConfig(BaseModel):
     stroke_style: str = "solid"  # solid, dashed, dotted
     arrow_start: Optional[str] = None  # "arrow", "circle", None
     arrow_end: Optional[str] = None  # "arrow", "circle", None
+    show_label: bool = True
+    label_color: Optional[str] = None
+    label_font_size: int = 14
 
 
 class EdgeTypeConfig(BaseModel):
@@ -39,12 +42,15 @@ class EdgeTypeConfig(BaseModel):
     arrow_end: Optional[str] = None  # "arrow", "circle", None
     group_padding: Optional[int] = None
     max_length: Optional[float] = None
+    show_label: bool = True
+    label_color: Optional[str] = None
+    label_font_size: int = 14
 
 
 class LayoutConfig(BaseModel):
     """Layout settings used for initial placement."""
 
-    algorithm: str = "tree"  # tree, dag
+    algorithm: str = "tree"  # tree, dag, freeform
     direction: str = "left-right"  # left-right, right-left, top-down, bottom-up
     level_spacing: int = 180
     sibling_spacing: int = 40

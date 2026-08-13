@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set
 SOURCE_SUFFIXES = {".md", ".csv"}
 WATCHED_FILENAMES = {
     "config.json",
+    "graph.json",
     "node_config.json",
     "edge_config.json",
     "output.excalidraw",

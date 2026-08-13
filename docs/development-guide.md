@@ -38,11 +38,13 @@ Every node has a stable ID that persists across rebuilds. This ID is:
 - Used to match positions from `positions.json` to nodes
 - Must be unique within a project folder
 
+Every edge also has a stable ID. Direct graphs declare it in `graph.json`; other producers receive a deterministic ID during the build. Edge IDs distinguish parallel relationships and provide stable Excalidraw arrow and label element IDs. Edge geometry is generated rather than synced.
+
 ### Data Flow
 
 ```
 Build Flow:
-  Source Files (CSV/MD) 
+  Source Files (graph.json/CSV/MD/dbt)
     → Parser 
     → Graph IR (nodes + edges) 
     → Merge positions.json 
@@ -60,7 +62,7 @@ Sync Flow:
 ```
 excali_builder/
 ├── core/           # Data models (Node, Edge, Graph)
-├── parsers/        # Input format parsers (CSV, Markdown)
+├── parsers/        # Input format parsers (graph, CSV, Markdown, dbt)
 ├── config/         # Configuration loading and schemas
 ├── layout/         # Positioning algorithms
 ├── excalidraw/     # Excalidraw import/export/sync
@@ -88,6 +90,7 @@ excali_builder/
 | `registry.py` | Parser registration by format name |
 | `csv.py` | CSV parser (node.csv, edge.csv) |
 | `dbt.py` | dbt manifest parser with optional `dbt_overlay.json` annotations |
+| `graph.py` | Direct versioned graph parser (`graph.json`) |
 | `markdown.py` | Markdown parser (headings with anchors) |
 
 **To add a new parser**:
@@ -96,7 +99,7 @@ excali_builder/
 3. Register in `builder.py`'s `__init__`
 4. Add to `parsers/__init__.py` exports
 
-**Design decision**: Parsers produce a `Graph` with `connection_type` looked up from `edge_config.json` based on `edge_type`. In Markdown, heading hierarchy is also stored on nodes as `hierarchy_parent_id`, so built-in child node types can render with a different inferred edge type without changing layout.
+**Design decision**: Parsers produce the same raw `Graph` contract. The direct graph parser declares nodes and edges without inference. Markdown, CSV, and dbt act as graph-producing conventions. `connection_type` is looked up from `edge_config.json` based on `edge_type`. In Markdown, heading hierarchy is also stored on nodes as `hierarchy_parent_id`, so built-in child node types can render with a different inferred edge type without changing layout.
 Markdown also supports built-in `link` and `comment` node types. Nested `link` nodes receive a default `link` edge to their parent unless the author explicitly declares `link:` edges. Nested `comment` nodes receive a default `comment` edge to their parent.
 
 #### `config/` - Configuration
@@ -119,11 +122,12 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 |------|---------|
 | `base.py` | Abstract `BaseLayout` interface |
 | `dag.py` | Layered DAG layout algorithm |
+| `freeform.py` | Neighbour-aware placement for nodes without saved positions |
 | `tree.py` | Tree layout algorithm |
 
 **Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement uses the configured layout algorithm.
 
-`layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. `dag` ranks nodes by configured dependency edge types such as `lineage`.
+`layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. Direct graphs default to `freeform` when no algorithm is declared. `dag` ranks nodes by configured dependency edge types such as `lineage`.
 
 #### `excalidraw/` - Excalidraw Integration
 
@@ -137,9 +141,11 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 - Rectangle/ellipse elements for nodes
 - Text elements bound to shape containers
 - Arrow elements for line connections
+- Bound text labels for non-empty line-edge labels
 - Groups for `group` and `enclosing_group` relationships
 - `customData.node_id` for position syncing
 - Deterministic shape/text element IDs so internal link nodes can target other nodes reliably
+- Deterministic edge and edge-label element IDs derived from stable edge IDs
 
 **Design decision**: Only node positions are synced, not edge positions. Edges are regenerated from source and bound to nodes, so they auto-update when nodes move.
 

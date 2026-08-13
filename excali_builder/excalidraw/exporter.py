@@ -216,7 +216,14 @@ class ExcalidrawExporter:
                         target_element_id,
                     )
                     arrow_id = arrow["id"]
+                    edge_label = self._create_edge_label(arrow, edge, line_config)
+                    if edge_label is not None:
+                        arrow["boundElements"].append(
+                            {"id": edge_label["id"], "type": "text"}
+                        )
                     elements.append(arrow)
+                    if edge_label is not None:
+                        elements.append(edge_label)
 
                     # Add arrow to boundElements of source and target shapes
                     if source_element_id and source_element_id in element_index_map:
@@ -772,7 +779,7 @@ class ExcalidrawExporter:
             "version": 1,
             "versionNonce": self._generate_nonce(),
             "isDeleted": False,
-            "id": self._generate_element_id(),
+            "id": self._get_edge_element_id(edge),
             "fillStyle": "solid",
             "strokeWidth": line_config.stroke_width,
             "strokeStyle": stroke_style,
@@ -797,9 +804,69 @@ class ExcalidrawExporter:
             "endBinding": end_binding,
             "startArrowhead": line_config.arrow_start,  # Can be None, "arrow", "circle", etc.
             "endArrowhead": line_config.arrow_end,  # Can be None, "arrow", "circle", etc.
+            "customData": {"edge_id": edge.id},
         }
 
         return arrow
+
+    def _create_edge_label(
+        self,
+        arrow: Dict[str, Any],
+        edge,
+        line_config: LineConnectionConfig,
+    ) -> Optional[Dict[str, Any]]:
+        """Create default-visible text bound to a labeled line edge."""
+        label = (edge.label or "").strip()
+        if not label or not line_config.show_label:
+            return None
+
+        font_size = line_config.label_font_size
+        line_height = font_size * 1.25
+        label_width = max(30.0, len(label) * font_size * 0.6)
+        label_height = line_height
+        points = arrow.get("points") or [[0, 0], [0, 0]]
+        end_point = points[-1]
+        center_x = arrow["x"] + float(end_point[0]) / 2
+        center_y = arrow["y"] + float(end_point[1]) / 2
+
+        return {
+            "type": "text",
+            "version": 1,
+            "versionNonce": self._generate_nonce(),
+            "isDeleted": False,
+            "id": self._get_edge_label_element_id(edge),
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 1,
+            "opacity": 100,
+            "angle": 0,
+            "x": center_x - label_width / 2,
+            "y": center_y - label_height / 2,
+            "strokeColor": line_config.label_color or line_config.color,
+            "backgroundColor": "transparent",
+            "width": label_width,
+            "height": label_height,
+            "seed": self._generate_seed(),
+            "groupIds": [],
+            "frameId": None,
+            "roundness": None,
+            "boundElements": [],
+            "updated": 1,
+            "link": None,
+            "locked": False,
+            "text": label,
+            "fontSize": font_size,
+            "fontFamily": self._get_excalidraw_font_family("Arial"),
+            "textAlign": "center",
+            "verticalAlign": "middle",
+            "baseline": line_height,
+            "containerId": arrow["id"],
+            "originalText": label,
+            "lineHeight": 1.25,
+            "autoResize": True,
+            "customData": {"edge_id": edge.id},
+        }
 
     def _calculate_text_width(self, text: str, node_config: NodeTypeConfig) -> float:
         """Estimate text width (rough approximation)."""
@@ -1009,6 +1076,27 @@ class ExcalidrawExporter:
     def _get_text_element_id(self, node_id: str) -> str:
         """Return a deterministic text element ID for a node."""
         return f"text-{self._stable_id_suffix(node_id)}"
+
+    def _get_edge_element_id(self, edge) -> str:
+        """Return a deterministic Excalidraw element ID for an edge."""
+        return f"edge-{self._stable_id_suffix(self._edge_identity(edge))}"
+
+    def _get_edge_label_element_id(self, edge) -> str:
+        """Return a deterministic Excalidraw element ID for an edge label."""
+        return f"edge-label-{self._stable_id_suffix(self._edge_identity(edge))}"
+
+    def _edge_identity(self, edge) -> str:
+        """Return the declared or structural identity for an edge."""
+        if edge.id:
+            return edge.id
+        return "\n".join(
+            [
+                edge.edge_type,
+                edge.source_id,
+                edge.target_id,
+                edge.label or "",
+            ]
+        )
 
     def _stable_id_suffix(self, value: str) -> str:
         """Create a short deterministic suffix for Excalidraw element IDs."""

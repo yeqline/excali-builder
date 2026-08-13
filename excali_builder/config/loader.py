@@ -134,6 +134,9 @@ class ConfigLoader:
         "stroke_style": "solid",
         "arrow_start": None,
         "arrow_end": None,
+        "show_label": True,
+        "label_color": None,
+        "label_font_size": 14,
     }
     EDGE_TYPE_TEMPLATES = {
         "attachment": {
@@ -325,6 +328,9 @@ class ConfigLoader:
             stroke_style=edge_config.stroke_style,
             arrow_start=edge_config.arrow_start,
             arrow_end=edge_config.arrow_end,
+            show_label=edge_config.show_label,
+            label_color=edge_config.label_color,
+            label_font_size=edge_config.label_font_size,
         )
 
     @staticmethod
@@ -343,7 +349,11 @@ class ConfigLoader:
             edge_type,
             ConfigLoader.DEFAULT_EDGE_TEMPLATE,
         )
-        return dict(template)
+        result = dict(template)
+        result.setdefault("show_label", result.get("connection_type") == "line")
+        result.setdefault("label_color", None)
+        result.setdefault("label_font_size", 14)
+        return result
 
     @staticmethod
     def _load_json_dict(path: Path) -> Dict[str, Any]:

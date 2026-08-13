@@ -1,10 +1,12 @@
 """Local HTTP server for auto-refreshing Excalidraw diagrams."""
 
 import json
+import math
 import mimetypes
 import queue
 import sys
 import threading
+import time
 import traceback
 import webbrowser
 from http import HTTPStatus
@@ -20,6 +22,7 @@ from .watcher import FolderWatchState
 
 
 MAX_LAYOUT_POST_BYTES = 25 * 1024 * 1024
+PLACEMENT_POINTER_MAX_AGE_SECONDS = 10.0
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
 
@@ -45,6 +48,9 @@ class ServeState:
         self.watch_state: Optional[FolderWatchState] = None
         self._subscribers = []
         self._watch_thread: Optional[threading.Thread] = None
+        self._pointer: Optional[Dict[str, float]] = None
+        self._pointer_updated_at: Optional[float] = None
+        self._viewport_center: Optional[Dict[str, float]] = None
 
     @property
     def output_path(self) -> Path:
@@ -105,7 +111,10 @@ class ServeState:
         with self.lock:
             positions = save_viewer_layout(self.folder, elements)
             if positions:
-                self.builder.build_from_folder(str(self.folder))
+                self.builder.build_from_folder(
+                    str(self.folder),
+                    placement_context=self.get_placement_anchor(),
+                )
                 if self.watch_state is not None:
                     self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                     self.watch_state.mark_internal_write(self.output_path)
@@ -121,6 +130,39 @@ class ServeState:
             self.notify({"type": "built", "reason": "layout"})
         return result
 
+    def update_placement_context(self, payload: Dict[str, Any]) -> None:
+        """Keep transient cursor and viewport anchors for placing new nodes."""
+        pointer = _optional_point(payload.get("pointer"), "pointer")
+        viewport_center = _optional_point(
+            payload.get("viewport_center"),
+            "viewport_center",
+        )
+        if pointer is None and viewport_center is None:
+            raise ValueError(
+                "placement context must include pointer or viewport_center"
+            )
+
+        with self.lock:
+            if pointer is not None:
+                self._pointer = pointer
+                self._pointer_updated_at = time.monotonic()
+            if viewport_center is not None:
+                self._viewport_center = viewport_center
+
+    def get_placement_anchor(self) -> Optional[Dict[str, float]]:
+        """Return a recent cursor or the current viewport center."""
+        with self.lock:
+            if (
+                self._pointer is not None
+                and self._pointer_updated_at is not None
+                and time.monotonic() - self._pointer_updated_at
+                <= PLACEMENT_POINTER_MAX_AGE_SECONDS
+            ):
+                return dict(self._pointer)
+            if self._viewport_center is not None:
+                return dict(self._viewport_center)
+        return None
+
     def sync_external_output(self) -> None:
         """Sync positions from an externally saved output.excalidraw file."""
         with self.lock:
@@ -132,7 +174,12 @@ class ServeState:
         with self.lock:
             if sync_first:
                 self.builder.sync_from_folder(str(self.folder))
-            output_path = Path(self.builder.build_from_folder(str(self.folder)))
+            output_path = Path(
+                self.builder.build_from_folder(
+                    str(self.folder),
+                    placement_context=self.get_placement_anchor(),
+                )
+            )
             if self.watch_state is not None:
                 self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                 self.watch_state.mark_internal_write(output_path)
@@ -239,13 +286,17 @@ def _make_handler(state: ServeState):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path != "/layout":
+            if parsed.path not in {"/layout", "/placement-context"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             try:
                 payload = self._read_json_body()
-                result = state.save_layout(payload)
+                if parsed.path == "/placement-context":
+                    state.update_placement_context(payload)
+                    result = {"ok": True}
+                else:
+                    result = state.save_layout(payload)
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
@@ -339,6 +390,26 @@ def _make_handler(state: ServeState):
             self.wfile.write(data)
 
     return ViewerHandler
+
+
+def _optional_point(value: Any, field_name: str) -> Optional[Dict[str, float]]:
+    """Validate an optional finite two-dimensional point."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    x = value.get("x")
+    y = value.get("y")
+    if not _is_finite_number(x) or not _is_finite_number(y):
+        raise ValueError(f"{field_name} must include finite x and y values")
+    return {"x": float(x), "y": float(y)}
+
+
+def _is_finite_number(value: Any) -> bool:
+    """Return whether a value is a finite JSON number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
