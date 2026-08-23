@@ -411,6 +411,11 @@ class StaticViewerTests(unittest.TestCase):
         self.assertIn("onPointerDown: handleCanvasPointer", viewer_js)
         self.assertIn("onPointerMove: handleCanvasPointer", viewer_js)
         self.assertIn("onScrollChange: handleScrollChange", viewer_js)
+        self.assertIn("onWheelCapture: handleCanvasWheel", viewer_js)
+        self.assertIn("event.shiftKey", viewer_js)
+        self.assertIn("event.ctrlKey", viewer_js)
+        self.assertIn("event.metaKey", viewer_js)
+        self.assertIn("zoom: { value: nextZoom }", viewer_js)
 
 
 if __name__ == "__main__":

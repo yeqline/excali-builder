@@ -4,6 +4,10 @@ import { Excalidraw } from "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/pr
 
 const SAVE_DEBOUNCE_MS = 800;
 const PLACEMENT_CONTEXT_DEBOUNCE_MS = 250;
+const WHEEL_ZOOM_SPEED = 0.001;
+const MAX_WHEEL_ZOOM_DELTA = 100;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 30;
 
 function normalizeScene(scene, preserveAppState) {
   const nextAppState = {
@@ -223,6 +227,54 @@ function App() {
     schedulePlacementContext(currentAppState);
   }, [api, schedulePlacementContext]);
 
+  const handleCanvasWheel = useCallback(
+    (event) => {
+      if (
+        !(event.target instanceof HTMLCanvasElement)
+        || event.shiftKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.altKey
+        || !api?.getAppState
+      ) {
+        return;
+      }
+
+      const appState = api.getAppState();
+      const delta = normalizeWheelDelta(event, appState.height);
+      if (!Number.isFinite(delta) || delta === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const currentZoom = appState.zoom?.value || 1;
+      const nextZoom = clamp(
+        currentZoom * Math.exp(-delta * WHEEL_ZOOM_SPEED),
+        MIN_ZOOM,
+        MAX_ZOOM,
+      );
+      if (nextZoom === currentZoom) {
+        return;
+      }
+
+      const viewportX = event.clientX - (appState.offsetLeft || 0);
+      const viewportY = event.clientY - (appState.offsetTop || 0);
+      const sceneX = viewportX / currentZoom - (appState.scrollX || 0);
+      const sceneY = viewportY / currentZoom - (appState.scrollY || 0);
+
+      api.updateScene({
+        appState: {
+          zoom: { value: nextZoom },
+          scrollX: viewportX / nextZoom - sceneX,
+          scrollY: viewportY / nextZoom - sceneY,
+        },
+      });
+    },
+    [api],
+  );
+
   useEffect(() => {
     return () => {
       window.clearTimeout(saveTimerRef.current);
@@ -259,6 +311,7 @@ function App() {
         className: "viewer-canvas",
         onPointerDown: handleCanvasPointer,
         onPointerMove: handleCanvasPointer,
+        onWheelCapture: handleCanvasWheel,
       },
       React.createElement(Excalidraw, {
         initialData: scene,
@@ -308,6 +361,20 @@ function getScenePoint(clientX, clientY, appState) {
     x: (clientX - offsetLeft) / zoom - scrollX,
     y: (clientY - offsetTop) / zoom - scrollY,
   };
+}
+
+function normalizeWheelDelta(event, viewportHeight) {
+  let delta = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    delta *= 16;
+  } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    delta *= viewportHeight || window.innerHeight;
+  }
+  return clamp(delta, -MAX_WHEEL_ZOOM_DELTA, MAX_WHEEL_ZOOM_DELTA);
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function layoutSignature(elements) {

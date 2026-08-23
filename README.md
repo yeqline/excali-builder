@@ -60,6 +60,8 @@ Dragging or resizing generated nodes in the viewer is saved back to `positions.j
 
 Layout saves also regenerate `output.excalidraw`, but they do not replace the scene already open in the browser. Source/config changes and external `output.excalidraw` saves still refresh the browser immediately. This keeps the live source-sync loop while avoiding a redundant full-scene reload after each drag or resize.
 
+Plain mouse-wheel scrolling zooms around the pointer. Use Shift+wheel to pan with Excalidraw's native wheel behavior; Ctrl/Cmd+wheel and trackpad pinch gestures retain their native zoom behavior. The middle mouse button and hand tool also remain available for panning.
+
 The viewer is served locally by the Python server and does not iframe `excalidraw.com`. To keep this Python package small and avoid committing a generated JavaScript bundle, the static page imports pinned browser ESM builds of React and `@excalidraw/excalidraw` from public CDNs on first page load.
 
 ## One-Shot Build Commands
