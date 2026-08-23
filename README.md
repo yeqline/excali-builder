@@ -58,6 +58,8 @@ Watched files are top-level `*.md`, `*.csv`, `graph.json`, `config.json`, `node_
 
 Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
 
+Layout saves also regenerate `output.excalidraw`, but they do not replace the scene already open in the browser. Source/config changes and external `output.excalidraw` saves still refresh the browser immediately. This keeps the live source-sync loop while avoiding a redundant full-scene reload after each drag or resize.
+
 The viewer is served locally by the Python server and does not iframe `excalidraw.com`. To keep this Python package small and avoid committing a generated JavaScript bundle, the static page imports pinned browser ESM builds of React and `@excalidraw/excalidraw` from public CDNs on first page load.
 
 ## One-Shot Build Commands

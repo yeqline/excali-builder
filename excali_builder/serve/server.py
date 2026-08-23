@@ -102,7 +102,7 @@ class ServeState:
             self.unsubscribe(subscriber)
 
     def save_layout(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Persist a viewer layout update and regenerate output from source."""
+        """Persist a viewer layout update and regenerate output without reloading it."""
         elements = payload.get("elements")
         if not isinstance(elements, list):
             raise ValueError("layout payload must include an elements array")
@@ -126,8 +126,6 @@ class ServeState:
             "saved_count": len(positions),
         }
         self.notify(result)
-        if positions:
-            self.notify({"type": "built", "reason": "layout"})
         return result
 
     def update_placement_context(self, payload: Dict[str, Any]) -> None:

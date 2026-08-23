@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from excali_builder.serve.layout import save_viewer_layout
 from excali_builder.serve.server import QuietThreadingHTTPServer, ServeState
@@ -211,6 +211,81 @@ class ServeLayoutTests(unittest.TestCase):
         self.assertEqual(positions, {})
         self.assertEqual(saved["known"]["x"], 10)
 
+    def test_layout_save_rebuilds_output_without_requesting_a_scene_reload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            _write_scene(folder)
+            state = ServeState(folder=folder, poll_interval=1.0)
+            state.builder = MagicMock()
+            subscriber = state.subscribe()
+
+            result = state.save_layout(
+                {
+                    "elements": [
+                        {
+                            "id": "shape-known",
+                            "type": "rectangle",
+                            "x": 120,
+                            "y": 140,
+                            "width": 220,
+                            "height": 90,
+                            "customData": {"node_id": "known"},
+                        },
+                        {
+                            "id": "text-known",
+                            "type": "text",
+                            "x": 130,
+                            "y": 150,
+                            "width": 180,
+                            "height": 55,
+                            "text": "Known\nBody",
+                            "originalText": "Known\nBody",
+                            "textAlign": "center",
+                            "verticalAlign": "top",
+                            "fontSize": 14,
+                            "customData": {"node_id": "known"},
+                        },
+                    ]
+                }
+            )
+            messages = []
+            while not subscriber.empty():
+                messages.append(subscriber.get_nowait())
+
+        state.builder.build_from_folder.assert_called_once_with(
+            str(folder),
+            placement_context=None,
+        )
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(
+            [message["type"] for message in messages],
+            ["saving-layout", "layout-saved"],
+        )
+        self.assertNotIn(
+            {"type": "built", "reason": "layout"},
+            messages,
+        )
+
+    def test_source_and_external_output_changes_still_request_a_scene_reload(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            folder = Path(tmp_dir)
+            _write_scene(folder)
+            state = ServeState(folder=folder, poll_interval=1.0)
+            state.builder = MagicMock()
+            state.builder.build_from_folder.return_value = str(
+                folder / "output.excalidraw"
+            )
+            subscriber = state.subscribe()
+
+            state._build(reason="source", sync_first=True)
+            state.sync_external_output()
+            messages = []
+            while not subscriber.empty():
+                messages.append(subscriber.get_nowait())
+
+        self.assertIn({"type": "built", "reason": "source"}, messages)
+        self.assertIn({"type": "built", "reason": "external-output"}, messages)
+
 
 class WatcherTests(unittest.TestCase):
     def test_watcher_ignores_recorded_internal_output_write_once(self):
@@ -318,16 +393,18 @@ class StaticViewerTests(unittest.TestCase):
         viewer_js = (SERVE_STATIC_DIR / "viewer.js").read_text(encoding="utf-8")
 
         self.assertIn(
-            "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/dev/index.css",
+            "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/prod/index.css",
             index_html,
         )
         self.assertIn('"react": "https://esm.sh/react@18.2.0"', index_html)
         self.assertIn('"react-dom/client": "https://esm.sh/react-dom@18.2.0/client"', index_html)
         self.assertIn(
-            "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/dev/index.js"
+            "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/prod/index.js"
             "?external=react,react-dom",
             viewer_js,
         )
+        self.assertNotIn("/dist/dev/", index_html)
+        self.assertNotIn("/dist/dev/", viewer_js)
         self.assertNotIn("@excalidraw/excalidraw@0.18.0/index.css", index_html)
         self.assertIn('fetch("/placement-context"', viewer_js)
         self.assertIn("onPointerUpdate: handlePointerUpdate", viewer_js)
