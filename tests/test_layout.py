@@ -725,7 +725,7 @@ class LayoutRegressionTests(unittest.TestCase):
             text_element["originalText"].count("\n"),
         )
 
-    def test_exporter_offsets_initial_text_box_by_padding(self):
+    def test_exporter_centers_node_text_vertically(self):
         graph = Graph()
         node = Node(
             id="node",
@@ -763,7 +763,53 @@ class LayoutRegressionTests(unittest.TestCase):
             text_element["x"],
             shape["x"] + (shape["width"] - text_element["width"]) / 2,
         )
-        self.assertEqual(text_element["y"], shape["y"] + 5)
+        self.assertEqual(text_element["verticalAlign"], "middle")
+        self.assertEqual(
+            text_element["y"],
+            shape["y"] + (shape["height"] - text_element["height"]) / 2,
+        )
+
+    def test_exporter_recenters_node_text_with_saved_top_alignment(self):
+        graph = Graph()
+        node = Node(
+            id="node",
+            label="Title",
+            type="concept",
+            x=40,
+            y=60,
+            width=220,
+            height=120,
+            metadata={
+                "text": "Body text",
+                "vertical_align": "top",
+                "text_y": 65,
+                "saved_wrapped_text": "Title\nBody text",
+                "saved_wrapped_original_text": "Title\nBody text",
+            },
+        )
+        graph.add_node(node)
+
+        config = _build_explicit_config(node_types=["concept"])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_path = Path(tmp_dir) / "output.excalidraw"
+            ExcalidrawExporter().export(graph, config, str(output_path))
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+
+        shape = next(
+            element
+            for element in data["elements"]
+            if element["type"] in {"rectangle", "ellipse", "diamond"}
+        )
+        text_element = next(
+            element for element in data["elements"] if element["type"] == "text"
+        )
+
+        self.assertEqual(text_element["verticalAlign"], "middle")
+        self.assertEqual(
+            text_element["y"],
+            shape["y"] + (shape["height"] - text_element["height"]) / 2,
+        )
 
     def test_sync_preserves_resized_bound_text_wrap_on_rebuild(self):
         full_text = (
@@ -1146,6 +1192,11 @@ class LayoutRegressionTests(unittest.TestCase):
             for element in data["elements"]
             if element["type"] == "rectangle"
         }
+        texts = {
+            element["customData"]["node_id"]: element
+            for element in data["elements"]
+            if element["type"] == "text"
+        }
 
         self.assertLess(
             shape_indexes["overlay.group.finance"],
@@ -1162,6 +1213,17 @@ class LayoutRegressionTests(unittest.TestCase):
         self.assertEqual(
             shapes["overlay.group.finance-marts"]["groupIds"],
             shapes["model.finance.fct_orders"]["groupIds"],
+        )
+        for group_id in ["overlay.group.finance", "overlay.group.finance-marts"]:
+            self.assertEqual(texts[group_id]["verticalAlign"], "top")
+            self.assertEqual(texts[group_id]["y"], shapes[group_id]["y"] + 5)
+
+        model_id = "model.finance.fct_orders"
+        self.assertEqual(texts[model_id]["verticalAlign"], "middle")
+        self.assertEqual(
+            texts[model_id]["y"],
+            shapes[model_id]["y"]
+            + (shapes[model_id]["height"] - texts[model_id]["height"]) / 2,
         )
 
     def test_procedure_and_step_use_built_in_defaults_and_next_edge_style(self):

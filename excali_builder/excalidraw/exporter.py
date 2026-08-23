@@ -72,6 +72,11 @@ class ExcalidrawExporter:
         # Export nodes as rectangles/ellipses with text labels
         node_element_map: Dict[str, str] = {}  # Maps node_id to element_id for binding
         element_index_map: Dict[str, int] = {}  # Maps element_id to index in elements list
+        enclosing_group_parent_ids = {
+            edge.source_id
+            for edge in graph.edges
+            if edge.connection_type == ConnectionType.ENCLOSING_GROUP
+        }
 
         for node in self._get_node_export_order(graph):
             node_config = ConfigLoader.get_node_config(config, node.type)
@@ -147,16 +152,14 @@ class ExcalidrawExporter:
 
             # Create text element with title and text (if available)
             # Store text_element_id before creating so we can add it to rectangle's boundElements
-            # Get saved text alignment and geometry from node metadata if available
+            # Preserve horizontal alignment and text sizing. Enclosing-group parents
+            # use the header space above their children; ordinary nodes stay centered.
             saved_text_align = node.metadata.get("text_align") if node.metadata else None
-            saved_vertical_align = node.metadata.get("vertical_align") if node.metadata else None
+            vertical_align = (
+                "top" if node.id in enclosing_group_parent_ids else "middle"
+            )
             saved_text_x = (
                 node.metadata.get("text_x")
-                if node.metadata and should_reuse_saved_wrap
-                else None
-            )
-            saved_text_y = (
-                node.metadata.get("text_y")
                 if node.metadata and should_reuse_saved_wrap
                 else None
             )
@@ -172,8 +175,8 @@ class ExcalidrawExporter:
             )
             text_element = self._create_text(
                 x, y, width, height, display_text, node_config, element_id,
-                text_align=saved_text_align, vertical_align=saved_vertical_align,
-                text_x=saved_text_x, text_y=saved_text_y,
+                text_align=saved_text_align, vertical_align=vertical_align,
+                text_x=saved_text_x,
                 text_width=saved_text_width, text_height=saved_text_height,
                 original_text=original_text,
                 element_id=text_element_id,
@@ -602,7 +605,7 @@ class ExcalidrawExporter:
         text_w = text_width if text_width is not None else measured_text_width
         text_h = text_height if text_height is not None else measured_text_height
         alignment = text_align or "center"
-        vertical_alignment = vertical_align or "top"
+        vertical_alignment = vertical_align or "middle"
         text_x_pos = text_x if text_x is not None else self._get_default_text_x(
             x,
             width,
@@ -647,7 +650,7 @@ class ExcalidrawExporter:
             "fontSize": node_config.font_size,
             "fontFamily": self._get_excalidraw_font_family(node_config.font_family),
             "textAlign": alignment,  # Use saved alignment or default to center
-            "verticalAlign": vertical_alignment,  # Use saved alignment or default to top
+            "verticalAlign": vertical_alignment,
             "baseline": line_height,
             "containerId": container_id,  # This tells Excalidraw to position relative to container
             "originalText": original_text or text,
