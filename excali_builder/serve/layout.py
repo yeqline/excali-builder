@@ -12,6 +12,7 @@ def save_viewer_layout(
     elements: Iterable[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
     """Persist layout fields for generated nodes from a viewer scene update."""
+    elements = list(elements)
     scene = load_scene(folder / "output.excalidraw")
     known_node_ids = get_known_node_ids(scene.get("elements", []))
     positions = extract_positions_from_elements(
@@ -20,6 +21,9 @@ def save_viewer_layout(
         baseline_elements=scene.get("elements", []),
     )
     merge_positions(folder / "positions.json", positions)
+    from ..layout.state import capture_edited_routes
+
+    capture_edited_routes(folder, elements, scene.get("elements", []))
     return positions
 
 

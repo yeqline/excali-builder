@@ -24,7 +24,11 @@ def confirm_full_refresh() -> bool:
 def create_build_parser() -> argparse.ArgumentParser:
     """Create the backward-compatible build command parser."""
     parser = argparse.ArgumentParser(
-        description="Build Excalidraw diagrams from source files (syncs positions then builds)"
+        description="Build Excalidraw diagrams from source files (syncs positions then builds)",
+        epilog=(
+            "Subcommands: serve, optimize, restore-layout. "
+            "Run 'excali-builder serve --help' or 'excali-builder optimize --help' for options."
+        ),
     )
     parser.add_argument("folder", type=str, help="Path to folder with source files")
     parser.add_argument(
@@ -74,6 +78,15 @@ def create_serve_parser() -> argparse.ArgumentParser:
 def parse_args(argv=None):
     """Parse CLI arguments while preserving the original positional build form."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"optimize", "restore-layout"}:
+        command = argv[0]
+        parser = argparse.ArgumentParser(prog=f"excali-builder {command}")
+        parser.add_argument("folder", help="Path to the diagram folder")
+        if command == "optimize":
+            parser.add_argument("--engine", help="Registered wiring layout engine")
+        args = parser.parse_args(argv[1:])
+        args.command = command
+        return args
     if argv and argv[0] == "serve":
         args = create_serve_parser().parse_args(argv[1:])
         args.command = "serve"
@@ -102,6 +115,22 @@ def main():
     """Main CLI entrypoint."""
     args = parse_args()
     folder_path = validate_folder(args.folder)
+
+    if args.command in {"optimize", "restore-layout"}:
+        from .layout.operations import optimize_folder, restore_folder
+
+        try:
+            if args.command == "optimize":
+                result = optimize_folder(folder_path, args.engine)
+                print(f"Optimized wiring layout with {result['engine']}: {folder_path / 'output.excalidraw'}")
+                print(f"Layout quality: {result['metrics']}")
+            else:
+                restore_folder(folder_path)
+                print("Restored the previous layout.")
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
 
     if args.command == "serve":
         if args.port < 0 or args.port > 65535:

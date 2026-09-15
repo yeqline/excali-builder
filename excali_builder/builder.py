@@ -34,6 +34,7 @@ class ExcaliBuilder:
         self.exporter = ExcalidrawExporter()
         self.importer = ExcalidrawImporter()
         self.sync = ExcalidrawSync()
+        self.last_layout_metrics: Dict[str, Any] = {}
 
         # Register default parsers
         self.parser_registry.register("csv", CSVParser)
@@ -48,6 +49,8 @@ class ExcaliBuilder:
         folder_path: str,
         full_refresh: bool = False,
         placement_context: Optional[Dict[str, Any]] = None,
+        optimize_layout: bool = False,
+        engine: Optional[str] = None,
     ) -> str:
         """Build Excalidraw diagram from source files in folder.
 
@@ -57,6 +60,8 @@ class ExcaliBuilder:
                 from scratch while still reusing saved sizes and text alignment.
             placement_context: Optional live-canvas point used for unconnected new
                 nodes by placement algorithms that support it.
+            optimize_layout: Recompute wiring geometry, including container sizes.
+            engine: Optional wiring engine override for this build.
         """
         folder = Path(folder_path)
 
@@ -90,20 +95,35 @@ class ExcaliBuilder:
         config = ConfigLoader.load_from_folder(folder)
         if parser_type == "graph" and not layout_algorithm_is_explicit:
             config.layout.algorithm = "freeform"
+        if optimize_layout:
+            config.layout.algorithm = "wiring"
+        if engine:
+            config.layout.engine = engine
 
         # 4. Load positions.json from folder if exists
         positions_data = self._load_positions_data(folder)
-        self._apply_saved_geometry(graph, positions_data, full_refresh=full_refresh)
-
-        # 5. For new nodes (without positions), apply the configured layout.
-        self._apply_layout_to_new_nodes(
-            graph,
-            config,
-            placement_context=placement_context,
+        self._apply_saved_geometry(
+            graph, positions_data, full_refresh=full_refresh or optimize_layout,
         )
 
+        # 5. For new nodes (without positions), apply the configured layout.
+        wiring_result = None
+        if config.layout.algorithm == "wiring":
+            wiring_result = self._apply_wiring_layout(
+                graph, config, folder, reset=full_refresh or optimize_layout,
+                compact=optimize_layout,
+            )
+        else:
+            self._apply_layout_to_new_nodes(
+                graph,
+                config,
+                placement_context=placement_context,
+            )
+
         # 6. Replace configured overlong line edges with local jump links.
-        generated_link_node_ids = self._replace_long_line_edges_with_link_nodes(graph, config)
+        generated_link_node_ids = (
+            [] if wiring_result else self._replace_long_line_edges_with_link_nodes(graph, config)
+        )
         if generated_link_node_ids:
             ConfigLoader.ensure_graph_config(folder, graph)
             config = ConfigLoader.load_from_folder(folder)
@@ -119,16 +139,85 @@ class ExcaliBuilder:
         # 7. Export to Excalidraw JSON
         output_path = folder / "output.excalidraw"
         self.exporter.export(graph, config, str(output_path))
-        if parser_type == "graph":
+        if parser_type == "graph" or wiring_result is not None:
             self._persist_new_layout(
                 folder,
                 output_path,
                 graph,
                 positions_data,
-                full_refresh=full_refresh,
+                full_refresh=full_refresh or optimize_layout or wiring_result is not None,
             )
+        if wiring_result is not None:
+            from .layout.state import save_state, topology_signature
+
+            save_state(folder, topology_signature(graph, config), wiring_result)
+            self.last_layout_metrics = wiring_result.metrics
 
         return str(output_path)
+
+    def _apply_wiring_layout(self, graph, config, folder, reset=False, compact=False):
+        from .layout.quality import measure_quality, validate_result
+        from .layout.routing import place_labels, route_fixed
+        from .layout.state import load_state, topology_signature
+        from .layout.wiring import (
+            apply_result, existing_layout, make_request, optimize, place_additions,
+        )
+
+        containers = {
+            edge.source_id for edge in graph.edges
+            if edge.connection_type == ConnectionType.ENCLOSING_GROUP
+        }
+        for node in graph.nodes.values():
+            style = ConfigLoader.get_node_config(config, node.type)
+            measured_width, measured_height = self.exporter.measure_node(node, style)
+            if node.id in containers:
+                text_style = self.exporter._apply_saved_font_size(node, style)
+                fixed_size = config.layout.wiring.fixed_sizes.get(node.id)
+                if fixed_size and (len(fixed_size) != 2 or any(
+                    not math.isfinite(value) or value <= 0 for value in fixed_size
+                )):
+                    raise ValueError(f"Fixed size for '{node.id}' must contain a positive width and height")
+                header_width = fixed_size[0] if fixed_size and len(fixed_size) == 2 else measured_width
+                header_lines = self.exporter._wrap_text_to_width(
+                    self.exporter.get_node_full_text(node), text_style, header_width,
+                ).splitlines()
+                node.metadata["layout_header_height"] = (
+                    len(header_lines) * text_style.font_size * 1.25 + text_style.padding * 2
+                )
+                if compact or node.width is None or node.height is None:
+                    node.width, node.height = measured_width, measured_height
+            if node.width is None:
+                node.width = measured_width
+            if node.height is None:
+                node.height = measured_height
+            if reset:
+                for key in ("saved_wrapped_text", "saved_wrapped_original_text",
+                            "text_x", "text_y", "text_width", "text_height"):
+                    node.metadata.pop(key, None)
+
+        request = make_request(graph, config)
+        saved = None if reset else load_state(folder, topology_signature(graph, config))
+        current = existing_layout(graph, request, saved)
+        if not current.boxes:
+            result = optimize(request, config.layout.engine, config.layout.wiring.candidates,
+                              config.layout.wiring.port_sides)
+        else:
+            result = current
+            if len(current.boxes) != len(graph.nodes):
+                candidate = optimize(request, config.layout.engine, 1, config.layout.wiring.port_sides)
+                place_additions(request, result, candidate)
+                apply_result(graph, result)
+                result = existing_layout(graph, request, saved)
+            missing_routes = {edge.id for edge in request.edges} - set(result.routes)
+            if missing_routes:
+                route_fixed(request, result, missing_routes)
+            elif any(edge.label_width and not result.routes[edge.id].label for edge in request.edges):
+                place_labels(request, result)
+            validate_result(request, result)
+            result.metrics = measure_quality(request, result)
+            result.metrics["engine"] = config.layout.engine
+        apply_result(graph, result)
+        return result
 
     def sync_from_folder(self, folder_path: str) -> None:
         """Sync positions from Excalidraw file to positions.json."""

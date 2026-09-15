@@ -81,6 +81,8 @@ class ExcalidrawExporter:
         for node in self._get_node_export_order(graph):
             node_config = ConfigLoader.get_node_config(config, node.type)
             node_config = self._apply_saved_font_size(node, node_config)
+            if config.layout.algorithm == "wiring" and node.id in enclosing_group_parent_ids:
+                node_config = node_config.model_copy(update={"shape": "rectangle"})
             shape_element_id = self._get_shape_element_id(node.id)
 
             measured_width, measured_height = self.measure_node(node, node_config)
@@ -220,7 +222,7 @@ class ExcalidrawExporter:
                     )
                     arrow_id = arrow["id"]
                     edge_label = self._create_edge_label(arrow, edge, line_config)
-                    if edge_label is not None:
+                    if edge_label is not None and not edge.metadata.get("layout_route"):
                         arrow["boundElements"].append(
                             {"id": edge_label["id"], "type": "text"}
                         )
@@ -810,6 +812,18 @@ class ExcalidrawExporter:
             "customData": {"edge_id": edge.id},
         }
 
+        route = edge.metadata.get("layout_route")
+        if route:
+            points = route["points"]
+            x, y = points[0]
+            arrow.update({
+                "x": x, "y": y,
+                "width": max(p[0] for p in points) - min(p[0] for p in points),
+                "height": max(p[1] for p in points) - min(p[1] for p in points),
+                "points": [[px - x, py - y] for px, py in points],
+                "roughness": 0, "roundness": None,
+            })
+
         return arrow
 
     def _create_edge_label(
@@ -819,7 +833,7 @@ class ExcalidrawExporter:
         line_config: LineConnectionConfig,
     ) -> Optional[Dict[str, Any]]:
         """Create default-visible text bound to a labeled line edge."""
-        label = (edge.label or "").strip()
+        label = (edge.metadata.get("layout_label_text") or edge.label or "").strip()
         if not label or not line_config.show_label:
             return None
 
@@ -831,6 +845,13 @@ class ExcalidrawExporter:
         end_point = points[-1]
         center_x = arrow["x"] + float(end_point[0]) / 2
         center_y = arrow["y"] + float(end_point[1]) / 2
+
+        route = edge.metadata.get("layout_route")
+        label_box = route.get("label") if route else None
+        if label_box:
+            label_width, label_height = label_box["width"], label_box["height"]
+            center_x = label_box["x"] + label_width / 2
+            center_y = label_box["y"] + label_height / 2
 
         return {
             "type": "text",
@@ -864,8 +885,8 @@ class ExcalidrawExporter:
             "textAlign": "center",
             "verticalAlign": "middle",
             "baseline": line_height,
-            "containerId": arrow["id"],
-            "originalText": label,
+            "containerId": None if route else arrow["id"],
+            "originalText": edge.label or label,
             "lineHeight": 1.25,
             "autoResize": True,
             "customData": {"edge_id": edge.id},

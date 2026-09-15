@@ -6,7 +6,7 @@ const SAVE_DEBOUNCE_MS = 800;
 const PLACEMENT_CONTEXT_DEBOUNCE_MS = 250;
 const WHEEL_ZOOM_SPEED = 0.001;
 const MAX_WHEEL_ZOOM_DELTA = 100;
-const MIN_ZOOM = 0.1;
+const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 30;
 
 function normalizeScene(scene, preserveAppState) {
@@ -43,7 +43,15 @@ function App() {
   const [status, setStatus] = useState("loading");
   const [detail, setDetail] = useState("");
   const [api, setApi] = useState(null);
+  const [layoutOptions, setLayoutOptions] = useState({
+    engines: [], engine: "elk", can_restore: false, can_optimize: false,
+  });
+  const [layoutBusy, setLayoutBusy] = useState(false);
+  const layoutBusyRef = useRef(false);
+  const revisionRef = useRef(null);
+  const saveQueueRef = useRef(Promise.resolve());
   const saveTimerRef = useRef(null);
+  const saveEpochRef = useRef(0);
   const placementTimerRef = useRef(null);
   const pointerRef = useRef(null);
   const appStateRef = useRef(null);
@@ -53,11 +61,20 @@ function App() {
 
   const loadDiagram = useCallback(
     async (preserveViewport) => {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+      saveEpochRef.current += 1;
       const response = await fetch("/diagram", { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`diagram request failed: ${response.status}`);
       }
       const rawScene = await response.json();
+      const optionsResponse = await fetch("/layout-options", { cache: "no-store" });
+      if (optionsResponse.ok) {
+        const options = await optionsResponse.json();
+        setLayoutOptions(options);
+        revisionRef.current = options.revision;
+      }
       const currentAppState = preserveViewport && api?.getAppState
         ? api.getAppState()
         : null;
@@ -99,15 +116,24 @@ function App() {
     events.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === "rebuilding") {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        saveEpochRef.current += 1;
         setStatus("rebuilding");
         setDetail("");
       } else if (message.type === "saving-layout") {
         setStatus("saving layout");
         setDetail("");
+      } else if (message.type === "optimizing-layout") {
+        setStatus("optimizing layout");
+        setDetail("");
       } else if (message.type === "layout-saved") {
         setStatus("layout saved");
         setDetail(message.saved_count ? `(${message.saved_count})` : "");
       } else if (message.type === "built") {
+        if (typeof message.revision === "number") {
+          revisionRef.current = message.revision;
+        }
         loadDiagram(true).catch((error) => {
           console.error(error);
           setStatus("error");
@@ -125,22 +151,66 @@ function App() {
     return () => events.close();
   }, [loadDiagram]);
 
-  const saveLayout = useCallback(async (elements) => {
+  const saveLayout = useCallback(async (elements, epoch) => {
     setStatus("saving layout");
     setDetail("");
     const response = await fetch("/layout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ elements }),
+      body: JSON.stringify({ elements, revision: revisionRef.current }),
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || `layout save failed: ${response.status}`);
     }
     const payload = await response.json();
+    if (epoch !== saveEpochRef.current) {
+      return;
+    }
+    if (payload.scene && api && !layoutBusyRef.current
+        && layoutSignature(api.getSceneElements()) === layoutSignature(elements)) {
+      applyingRemoteRef.current = true;
+      lastLayoutSignatureRef.current = layoutSignature(payload.scene.elements);
+      api.updateScene({ elements: payload.scene.elements });
+      window.setTimeout(() => { applyingRemoteRef.current = false; }, 250);
+    }
     setStatus("layout saved");
     setDetail(payload.saved_count ? `(${payload.saved_count})` : "");
-  }, []);
+  }, [api]);
+
+  const runLayout = useCallback(async (restore = false) => {
+    if (!api || layoutBusyRef.current) return;
+    layoutBusyRef.current = true;
+    setLayoutBusy(true);
+    window.clearTimeout(saveTimerRef.current);
+    setStatus(restore ? "restoring layout" : "optimizing layout");
+    setDetail("");
+    try {
+      await saveQueueRef.current;
+      const response = await fetch(restore ? "/restore-layout" : "/optimize-layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          elements: api.getSceneElements(), engine: layoutOptions.engine,
+          revision: revisionRef.current,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Layout operation failed");
+      revisionRef.current = payload.revision;
+      await loadDiagram(true);
+      if (!restore) fitDiagram(api);
+      if (payload.metrics) {
+        setDetail(`${payload.metrics.crossings} crossings`);
+      }
+    } catch (error) {
+      setStatus("error");
+      setDetail(error.message);
+    } finally {
+      layoutBusyRef.current = false;
+      setLayoutBusy(false);
+    }
+  }, [api, layoutOptions.engine, loadDiagram]);
 
   const sendPlacementContext = useCallback(async () => {
     const viewportCenter = getViewportCenter(appStateRef.current);
@@ -178,7 +248,7 @@ function App() {
   const handleChange = useCallback(
     (elements, appState) => {
       schedulePlacementContext(appState);
-      if (!hasMountedSceneRef.current || applyingRemoteRef.current) {
+      if (!hasMountedSceneRef.current || applyingRemoteRef.current || layoutBusyRef.current) {
         return;
       }
       const nextSignature = layoutSignature(elements);
@@ -186,9 +256,15 @@ function App() {
         return;
       }
       lastLayoutSignatureRef.current = nextSignature;
+      const epoch = saveEpochRef.current;
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
-        saveLayout(elements).catch((error) => {
+        saveQueueRef.current = saveQueueRef.current.catch(() => {}).then(() => {
+          if (epoch !== saveEpochRef.current) {
+            return;
+          }
+          return saveLayout(elements, epoch);
+        }).catch((error) => {
           console.error(error);
           setStatus("error");
           setDetail(error.message);
@@ -301,14 +377,40 @@ function App() {
     );
   }
 
+  const canOptimize = Boolean(
+    layoutOptions.can_optimize
+    ?? (layoutOptions.parser_type === "csv" || layoutOptions.algorithm === "wiring")
+  );
+
   return React.createElement(
     "div",
     { className: "viewer-shell" },
     React.createElement(Status, { status, detail }),
+    React.createElement("div", {
+      className: "layout-controls",
+      "aria-label": canOptimize ? "Wiring layout" : "Diagram layout",
+    },
+      canOptimize
+        ? React.createElement("select", {
+          "aria-label": "Layout engine", value: layoutOptions.engine, disabled: layoutBusy,
+          onChange: (event) => setLayoutOptions((current) => ({ ...current, engine: event.target.value })),
+        }, layoutOptions.engines.map((engine) => React.createElement("option", { key: engine, value: engine }, engine)))
+        : null,
+      canOptimize
+        ? React.createElement("button", { onClick: () => runLayout(false), disabled: layoutBusy },
+          layoutBusy ? "Working…" : "Optimize wiring layout")
+        : null,
+      layoutOptions.can_restore
+        ? React.createElement("button", {
+          onClick: () => runLayout(true), disabled: layoutBusy,
+        }, "Restore previous layout")
+        : null,
+      React.createElement("button", { onClick: () => fitDiagram(api), disabled: layoutBusy }, "Fit diagram"),
+    ),
     React.createElement(
       "div",
       {
-        className: "viewer-canvas",
+        className: `viewer-canvas${layoutBusy ? " layout-busy" : ""}`,
         onPointerDown: handleCanvasPointer,
         onPointerMove: handleCanvasPointer,
         onWheelCapture: handleCanvasWheel,
@@ -348,6 +450,34 @@ function getViewportCenter(appState) {
   };
 }
 
+function fitDiagram(api) {
+  if (!api) return;
+  const elements = api.getSceneElements().filter((element) => !element.isDeleted);
+  if (!elements.length) return;
+  const bounds = elements.map((element) => {
+    const points = element.points || [[0, 0], [element.width, element.height]];
+    return {
+      left: element.x + Math.min(...points.map((point) => point[0])),
+      right: element.x + Math.max(...points.map((point) => point[0])),
+      top: element.y + Math.min(...points.map((point) => point[1])),
+      bottom: element.y + Math.max(...points.map((point) => point[1])),
+    };
+  });
+  const left = Math.min(...bounds.map((box) => box.left));
+  const right = Math.max(...bounds.map((box) => box.right));
+  const top = Math.min(...bounds.map((box) => box.top));
+  const bottom = Math.max(...bounds.map((box) => box.bottom));
+  const state = api.getAppState();
+  const width = state.width || window.innerWidth;
+  const height = state.height || window.innerHeight;
+  const zoom = clamp(Math.min((width - 120) / Math.max(1, right - left),
+    (height - 200) / Math.max(1, bottom - top)), MIN_ZOOM, 1);
+  api.updateScene({ appState: {
+    zoom: { value: zoom }, scrollX: width / (2 * zoom) - (left + right) / 2,
+    scrollY: height / (2 * zoom) - (top + bottom) / 2,
+  } });
+}
+
 function getScenePoint(clientX, clientY, appState) {
   if (!appState || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
     return null;
@@ -380,7 +510,7 @@ function clamp(value, minimum, maximum) {
 function layoutSignature(elements) {
   return JSON.stringify(
     (elements || [])
-      .filter((element) => element.customData?.node_id)
+      .filter((element) => element.customData?.node_id || element.customData?.edge_id)
       .map((element) => ({
         id: element.id,
         nodeId: element.customData.node_id,
@@ -390,6 +520,7 @@ function layoutSignature(elements) {
         y: element.y,
         width: element.width,
         height: element.height,
+        points: element.points,
         textAlign: element.textAlign,
         verticalAlign: element.verticalAlign,
         fontSize: element.fontSize,

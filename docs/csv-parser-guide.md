@@ -4,7 +4,7 @@ This guide explains how to use the CSV parser to create Excalidraw diagrams from
 
 ## Overview
 
-The CSV parser reads node and edge definitions from CSV files and converts them into Excalidraw diagrams. Fresh builds always use a tree layout. The hierarchy for that tree comes from edges with `edge_type: parent_child`.
+The CSV parser reads node and edge definitions from CSV files and converts them into Excalidraw diagrams. Fresh builds use a tree layout by default. The hierarchy for that tree comes from edges with `edge_type: parent_child`. For diagrams with devices and ports, the [wiring layout](wiring-layout-guide.md) optimizes device placement, port ordering, and wire routes together and supports replaceable layout engines.
 
 - **Line connections**: Relationship arrows between nodes
 - **Group connections**: No arrow is drawn; related nodes are grouped in Excalidraw
