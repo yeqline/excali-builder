@@ -1,6 +1,6 @@
 """Configuration schemas for node, edge, and layout settings."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -47,10 +47,32 @@ class EdgeTypeConfig(BaseModel):
     label_font_size: int = 14
 
 
+class WiringConfig(BaseModel):
+    """Engine-independent readability settings and explicit schematic constraints."""
+
+    candidates: int = Field(default=4, ge=1, le=16)
+    timeout_seconds: float = Field(default=40, gt=0, le=300)
+    node_spacing: float = Field(default=90, gt=0)
+    wire_spacing: float = Field(default=18, gt=0)
+    port_spacing: float = Field(default=16, gt=0)
+    padding: float = Field(default=24, gt=0)
+    label_max_width: float = Field(default=220, ge=60)
+    port_types: List[str] = Field(default_factory=lambda: ["port"])
+    edge_roles: Dict[str, Literal["flow", "distribution", "annotation"]] = Field(
+        default_factory=lambda: {"annotation": "annotation"}
+    )
+    port_sides: Dict[str, Literal["WEST", "EAST"]] = Field(default_factory=dict)
+    port_order: Dict[str, List[str]] = Field(default_factory=dict)
+    fixed_sizes: Dict[str, List[float]] = Field(default_factory=dict)
+    engine_options: Dict[str, Any] = Field(default_factory=dict)
+
+
 class LayoutConfig(BaseModel):
     """Layout settings used for initial placement."""
 
-    algorithm: str = "tree"  # tree, dag, freeform
+    algorithm: str = "tree"  # tree, dag, freeform, wiring
+    engine: str = "elk"
+    wiring: WiringConfig = Field(default_factory=WiringConfig)
     direction: str = "left-right"  # left-right, right-left, top-down, bottom-up
     level_spacing: int = 180
     sibling_spacing: int = 40

@@ -1,0 +1,7 @@
+{
+  "name": "excali-builder-layout-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Optional local runtime for the ELK layout adapter",
+  "dependencies": { "elkjs": "0.12.0" }
+}

@@ -7,7 +7,8 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Version control your diagrams**: Keep diagram content in JSON, CSV, or Markdown, and track changes with git
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
-- **Deterministic initial layout**: Fresh builds use free-form, tree, or DAG placement
+- **Deterministic initial layout**: Fresh builds use free-form, tree, DAG, or port-aware wiring placement
+- **Optimize wiring diagrams**: Arrange devices, ports, and orthogonal wire routes with replaceable layout engines; restore the preceding layout with one action. See the [wiring layout guide](docs/wiring-layout-guide.md).
 - **Multiple rendering modes for edges**: Draw arrows with `line`, visually group nodes with `group`, or draw enclosing groups with `enclosing_group`
 - **Visible relationship labels**: Render non-empty line-edge labels by default, with per-type styling and opt-out
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
@@ -56,9 +57,9 @@ uv run excali-builder serve path/to/your-diagram-folder --port 0 --no-open
 
 Watched files are top-level `*.md`, `*.csv`, `graph.json`, `config.json`, `node_config.json`, `edge_config.json`, and `output.excalidraw`. For dbt diagrams, configured manifest and overlay files are watched too, even when manifests live outside the visualization folder. Source and config edits rebuild the diagram. External saves to `output.excalidraw` sync layout into `positions.json` without triggering a rebuild loop.
 
-Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists only layout fields for elements with `customData.node_id`; source files remain authoritative for titles, body text, relationships, and styles.
+Dragging or resizing generated nodes in the viewer is saved back to `positions.json` automatically. The server persists layout fields for elements with `customData.node_id` and wiring routes for generated edges; source files remain authoritative for titles, body text, relationships, and styles.
 
-Layout saves also regenerate `output.excalidraw`, but they do not replace the scene already open in the browser. Source/config changes and external `output.excalidraw` saves still refresh the browser immediately. This keeps the live source-sync loop while avoiding a redundant full-scene reload after each drag or resize.
+Layout saves also regenerate `output.excalidraw`. Wiring layouts update the browser with rerouted connections when there are no newer local edits; other layouts keep the scene already open in the browser. Source/config changes and external `output.excalidraw` saves still refresh the browser immediately. This keeps the live source-sync loop while avoiding a redundant full-scene reload after each drag or resize.
 
 Plain mouse-wheel scrolling zooms around the pointer. Use Shift+wheel to pan with Excalidraw's native wheel behavior; Ctrl/Cmd+wheel and trackpad pinch gestures retain their native zoom behavior. The middle mouse button and hand tool also remain available for panning.
 
@@ -74,6 +75,12 @@ uv run excali-builder path/to/your-diagram-folder
 
 # Rebuild layout from scratch but keep saved node sizes
 uv run excali-builder --full-refresh path/to/your-diagram-folder
+
+# Optimize a CSV wiring diagram (or convert a CSV tree diagram to wiring)
+uv run excali-builder optimize path/to/your-diagram-folder --engine elk
+
+# Restore the layout from immediately before that optimization
+uv run excali-builder restore-layout path/to/your-diagram-folder
 ```
 
 A normal one-shot build syncs layout from any existing `output.excalidraw`, then regenerates the diagram. `serve` uses the same sync/build contract but keeps it running continuously.
@@ -248,6 +255,7 @@ Example `config.json`:
 
 - [Free-form Graph Guide](docs/freeform-graph-guide.md) — How to define unrestricted nodes and edges in `graph.json`
 - [CSV Parser Guide](docs/csv-parser-guide.md) — How to use CSV files
+- [Wiring Layout Guide](docs/wiring-layout-guide.md) — Optimize devices, ports, and routes; install or replace layout engines
 - [Markdown Parser Guide](docs/md-parser-guide.md) — How to use Markdown files
 - [Markdown Flow Guide](docs/markdown-flow-guide.md) — How to create arbitrary workflows with multiple H1 nodes and explicit edges
 - [dbt Parser Guide](docs/dbt-parser-guide.md) — How to visualize dbt manifest lineage with overlays

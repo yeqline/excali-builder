@@ -124,10 +124,12 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 | `dag.py` | Layered DAG layout algorithm |
 | `freeform.py` | Neighbour-aware placement for nodes without saved positions |
 | `tree.py` | Tree layout algorithm |
+| `wiring.py` | Compound device/port wiring layout and incremental placement |
+| `engines/` | Replaceable wiring engines; ELK is the default adapter |
 
-**Key concept**: Layout only runs for nodes without positions. If a node has geometry from `positions.json`, it's used as-is. Initial placement uses the configured layout algorithm.
+**Key concept**: Tree, DAG, and freeform layout only run for nodes without positions. Saved geometry from `positions.json` is used as-is. Wiring layout also preserves saved positions; it places new devices and ports around that geometry and can reroute wires. Initial placement uses the configured layout algorithm.
 
-`layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. Direct graphs default to `freeform` when no algorithm is declared. `dag` ranks nodes by configured dependency edge types such as `lineage`.
+`layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. Direct graphs default to `freeform` when no algorithm is declared. `dag` ranks nodes by configured dependency edge types such as `lineage`. `wiring` arranges compound devices, ports, and orthogonal routes; see `docs/wiring-layout-guide.md`.
 
 #### `excalidraw/` - Excalidraw Integration
 

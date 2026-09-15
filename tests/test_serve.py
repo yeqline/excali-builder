@@ -283,8 +283,8 @@ class ServeLayoutTests(unittest.TestCase):
             while not subscriber.empty():
                 messages.append(subscriber.get_nowait())
 
-        self.assertIn({"type": "built", "reason": "source"}, messages)
-        self.assertIn({"type": "built", "reason": "external-output"}, messages)
+        self.assertIn({"type": "built", "reason": "source", "revision": 1}, messages)
+        self.assertIn({"type": "built", "reason": "external-output", "revision": 2}, messages)
 
 
 class WatcherTests(unittest.TestCase):
