@@ -1,4 +1,4 @@
-"""Orthogonal routing around fixed device geometry, independent of layout engines."""
+"""Straight and orthogonal routing independent of layout engines."""
 
 import heapq
 import time
@@ -26,8 +26,45 @@ def simplify(points: List[Point]) -> List[Point]:
     return result
 
 
+def route_straight(request: LayoutRequest, result: LayoutResult, edge_ids=None) -> None:
+    """Connect endpoint boundaries with one segment while preserving node positions."""
+    requested = set(edge_ids) if edge_ids is not None else {e.id for e in request.edges}
+    result.routes = {
+        key: route for key, route in result.routes.items() if key not in requested
+    }
+    for edge in request.edges:
+        if edge.id not in requested:
+            continue
+        source = result.boxes[edge.source]
+        target = result.boxes[edge.target]
+        source_center = (source.x + source.width / 2, source.y + source.height / 2)
+        target_center = (target.x + target.width / 2, target.y + target.height / 2)
+        result.routes[edge.id] = Route(
+            [
+                _box_boundary_toward(source, target_center, 1),
+                _box_boundary_toward(target, source_center, -1),
+            ]
+        )
+    place_labels(request, result)
+
+
+def _box_boundary_toward(box: Box, other: Point, coincident_direction: int) -> Point:
+    center_x, center_y = box.x + box.width / 2, box.y + box.height / 2
+    dx, dy = other[0] - center_x, other[1] - center_y
+    if abs(dx) < 0.01 and abs(dy) < 0.01:
+        return (center_x + coincident_direction * box.width / 2, center_y)
+    scale = min(
+        box.width / 2 / abs(dx) if abs(dx) >= 0.01 else float("inf"),
+        box.height / 2 / abs(dy) if abs(dy) >= 0.01 else float("inf"),
+    )
+    return (center_x + dx * scale, center_y + dy * scale)
+
+
 def route_fixed(request: LayoutRequest, result: LayoutResult, edge_ids=None) -> None:
-    """Reroute changed connections while preserving every node position."""
+    """Reroute changed connections in the requested style, preserving node positions."""
+    if request.edge_routing == "straight":
+        route_straight(request, result, edge_ids)
+        return
     ancestry = ancestors(request)
     deadline = time.monotonic() + request.timeout
     specs = {node.id: node for node in request.nodes}
@@ -177,25 +214,24 @@ def place_labels(request: LayoutRequest, result: LayoutResult) -> None:
         for a, b in all_segments[edge.id]:
             for t in (0.5, 0.25, 0.75):
                 cx, cy = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                segment_length = (dx * dx + dy * dy) ** 0.5
+                if segment_length < 0.01:
+                    continue
+                normal_x, normal_y = -dy / segment_length, dx / segment_length
+                offset = (
+                    abs(normal_x) * edge.label_width
+                    + abs(normal_y) * edge.label_height
+                ) / 2 + 6
                 for sign in (-1, 1):
-                    if abs(a[1] - b[1]) < 0.01:
-                        candidates.append(
-                            Box(
-                                cx - edge.label_width / 2,
-                                cy + (6 if sign > 0 else -edge.label_height - 6),
-                                edge.label_width,
-                                edge.label_height,
-                            )
+                    candidates.append(
+                        Box(
+                            cx + sign * normal_x * offset - edge.label_width / 2,
+                            cy + sign * normal_y * offset - edge.label_height / 2,
+                            edge.label_width,
+                            edge.label_height,
                         )
-                    else:
-                        candidates.append(
-                            Box(
-                                cx + (6 if sign > 0 else -edge.label_width - 6),
-                                cy - edge.label_height / 2,
-                                edge.label_width,
-                                edge.label_height,
-                            )
-                        )
+                    )
 
         def cost(label):
             return (

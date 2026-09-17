@@ -47,9 +47,18 @@ class EdgeTypeConfig(BaseModel):
     label_font_size: int = 14
 
 
+class PartTemplateConfig(BaseModel):
+    """Optional constraints for a part identity declared in source metadata."""
+
+    optimize: bool = True
+    port_sides: Dict[str, Literal["WEST", "EAST"]] = Field(default_factory=dict)
+    port_order: List[str] = Field(default_factory=list)
+
+
 class WiringConfig(BaseModel):
     """Engine-independent readability settings and explicit schematic constraints."""
 
+    edge_routing: Literal["straight", "orthogonal"] = "straight"
     candidates: int = Field(default=4, ge=1, le=16)
     timeout_seconds: float = Field(default=40, gt=0, le=300)
     node_spacing: float = Field(default=90, gt=0)
@@ -64,6 +73,7 @@ class WiringConfig(BaseModel):
     port_sides: Dict[str, Literal["WEST", "EAST"]] = Field(default_factory=dict)
     port_order: Dict[str, List[str]] = Field(default_factory=dict)
     fixed_sizes: Dict[str, List[float]] = Field(default_factory=dict)
+    part_templates: Dict[str, PartTemplateConfig] = Field(default_factory=dict)
     engine_options: Dict[str, Any] = Field(default_factory=dict)
 
 

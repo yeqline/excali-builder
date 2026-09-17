@@ -1,8 +1,8 @@
 # Wiring layout
 
-The `wiring` layout arranges devices, their contained ports, and routed connections together. It compares deterministic candidates using box obstructions, label collisions, wire crossings, shared segments, aspect ratio, bends, and wire length. It is a readability heuristic, not a guarantee of a globally optimal drawing.
+The `wiring` layout arranges devices, their contained ports, and routed connections together. Straight connections are the default. It compares deterministic candidates using the routes that will actually be rendered: box obstructions, label collisions, wire crossings, shared segments, aspect ratio, bends, and wire length. It is a readability heuristic, not a guarantee of a globally optimal drawing.
 
-## Install the optional ELK engine
+## Install the optional layout runtime
 
 Install Node.js, then run this from the repository root:
 
@@ -16,7 +16,7 @@ Python package installations also include the runtime manifest and runner. Find 
 python -c 'from excali_builder.layout.engines.elk import RUNTIME; print(RUNTIME)'
 ```
 
-Run `npm ci --prefix <runtime-directory> --ignore-scripts` there. The dependency is pinned in `package-lock.json`. Layout runs locally; it requires no external layout service. Other layouts do not require Node.js or ELK.
+Run `npm ci --prefix <runtime-directory> --ignore-scripts` there. The dependency is pinned in `package-lock.json`. Layout runs locally; it requires no external layout service. The built-in `elk` and `hybrid` wiring engines use this runtime. Other layouts do not require Node.js or ELK.
 
 ## Initial layout and manual optimization
 
@@ -31,6 +31,7 @@ For an initial wiring layout, set these fields in the diagram's `config.json`:
     "direction": "left-right",
     "level_spacing": 160,
     "wiring": {
+      "edge_routing": "straight",
       "candidates": 4,
       "timeout_seconds": 40,
       "node_spacing": 90,
@@ -61,6 +62,15 @@ To rearrange an existing diagram, use the viewer's **Optimize wiring layout** bu
 excali-builder optimize <diagram-folder> --engine elk
 ```
 
+The built-in `elk` engine provides ELK's layered placement. The `hybrid` engine
+uses the same compound, port-aware ELK seed and then searches port-side and
+device-order alternatives with a crossing-aware sifting pass. It is intended
+for straight routing, where reducing wire crossings is the primary objective.
+Select either engine in the viewer or pass `--engine elk` / `--engine hybrid` to
+the CLI. To let the hybrid adapter try more independent ELK seeds, set
+`layout.wiring.engine_options.hybrid_candidates` (from 1 to 8); the normal
+`wiring.candidates` setting still controls the common outer candidate search.
+
 Optimization updates `config.json` to select the wiring layout and chosen engine. It computes the result in a temporary copy before publishing it. Device containers can shrink or grow to fit their ports and headings; ordinary saved node sizes are retained. Containers render as rectangles so their bounds match the routing obstacles. All node and wire IDs, source text, colors, and electrical endpoints are retained.
 
 Restore the preceding layout with the viewer's **Restore previous layout** button or:
@@ -87,7 +97,72 @@ Port boxes are arranged in west/east banks inside their device, with the complet
 
 These fields belong under `layout.wiring`. `port_order` is a top-to-bottom order within each side; unlisted ports follow the listed ports. `fixed_sizes` contains exact `[width, height]` pairs. Constraints that cannot contain the ports are rejected. Explicit port sides currently support `WEST` and `EAST`; the overall diagram direction can also be vertical.
 
-Wire labels wrap at `label_max_width`. Orthogonal routes avoid unrelated devices and ports. A common segment is distinguished in the quality report from an overlap between wires that do not share a terminal. No electrical nets are inferred from colors or edge type names.
+### Shared arrangements for identical parts
+
+Declare model numbers in `node.csv`. No instance lists
+or role-to-node mappings are needed in configuration:
+
+```csv
+node_id,node_type,node_title,node_text,model_number
+motor_x,motor,X motor,Closed-loop stepper,23HS40-5004D-E1K-1M5
+motor_x_encoder,port,ENCODER,Encoder lead,
+motor_x_phase,port,A+ A- B+ B-,Motor conductors,
+motor_y1,motor,Y1 motor,Closed-loop stepper,23HS40-5004D-E1K-1M5
+motor_y1_encoder,port,ENCODER,Encoder lead,
+motor_y1_phase,port,A+ A- B+ B-,Motor conductors,
+```
+
+`node_id` identifies an instance; `model_number` identifies its physical part.
+Corresponding ports are matched by their existing `node_title` values, with
+whitespace normalized. Port titles must be unique within a device and match
+across all instances of a model; they are case-sensitive. Device titles and
+port body text can differ. Containment remains defined by enclosing-group
+edges in `edge.csv`. Other source parsers can supply `model_number` in node
+metadata and matching port labels. Legacy CSVs without this optional column
+remain valid and do not implicitly group devices by node type, title,
+descriptive text, or ID suffix.
+
+Templates and instances are discovered automatically from this source data.
+Optimization is enabled by default. The common pipeline explores a
+shared bank assignment and vertical order, scoring all instances' connections
+on the full drawing. It selects the best arrangement found within the time
+budget and applies it to every instance. Parts with up to three roles enumerate
+all bank/order arrangements for a given device placement; larger parts use
+shared port sifting and side switches. Multiple templates are refined together,
+and successive placement candidates use the winning arrangements as seeds.
+This is a heuristic search, not a guarantee of the global minimum.
+
+Corresponding ports share dimensions and exact offsets from their device's
+top-left corner. Device dimensions and heading clearance are standardized to
+fit every instance's labels and any candidate bank arrangement. The engine can
+move each whole device, but cannot mirror or reorder an individual instance.
+The selected arrangements are stored in `wiring-layout.json` under
+`result.metrics.part_templates`. Cached rebuilds and new instances reuse them;
+an explicit optimization searches again. Moving a port independently is
+corrected to its template position on rebuild.
+
+For optional hard restrictions, use `layout.wiring.part_templates`, keyed by
+the source `model_number`, with port-title-based `port_sides` and/or `port_order`.
+For example, `"part_templates": {"23HS40-5004D-E1K-1M5":
+{"port_sides": {"ENCODER": "WEST", "A+ A- B+ B-": "WEST"}}}`
+allows optimization of their shared order while keeping both in the west bank.
+Set `"optimize": false` to retain the initial shared sides and order; use
+`port_order` to specify an explicit order. Per-instance side/order constraints must be compatible
+with the whole template. Conflicting fixed dimensions are rejected. Each
+identified instance must have unique titles on its contained ports, and all
+instances of a model must expose the same port titles. Empty titles, duplicate
+titles, and mismatched variants fail with a source-data error. Templates
+currently describe containers containing only ports.
+
+These rules apply to all engines selected by `layout.engine`, including `elk`,
+`hybrid`, and registered adapters, on the `wiring` pipeline. The independent
+tree, DAG, and free-form layouts do not perform compound port optimization.
+See [the shared-parts example](../examples/shared-parts-diagram/README.md) for
+a runnable diagram.
+
+Wire labels wrap at `label_max_width`. `edge_routing: "straight"` draws every generated connection as one segment and scores layout candidates using those same segments. This favors a visually simple connection model, but a dense or tightly constrained diagram can still force a straight connection across another node. The optimizer reports those cases as obstructions and prefers candidates with fewer of them.
+
+Set `edge_routing: "orthogonal"` when avoiding unrelated devices and ports is more important than minimizing bends. Orthogonal mode routes around obstacles and preserves manually edited right-angle bends. A common segment is distinguished in the quality report from an overlap between wires that do not share a terminal. No electrical nets are inferred from colors or edge type names.
 
 `positions.json` stores editable node geometry. `wiring-layout.json` stores engine-neutral routes, label rectangles, port sides, and quality measurements. Normal rebuilds reuse unaffected routes; moving a device reroutes affected connections without running a global placement. Keep both files when sharing a diagram whose layout must survive rebuilds.
 
@@ -95,13 +170,13 @@ Wire labels wrap at `label_max_width`. Orthogonal routes avoid unrelated devices
 
 `layout.algorithm: "wiring"` selects the common wiring pipeline. `layout.engine` selects its placement adapter. The exporter, CLI, viewer, saved geometry, and scoring do not consume ELK JSON.
 
-Implement `LayoutEngine.layout(request) -> LayoutResult` from `excali_builder.layout.engines.base`. The neutral request describes nodes, containment, port sizes/sides/order, edge endpoints and label dimensions, spacing, direction, a deterministic seed, and a timeout. The result contains:
+Implement `LayoutEngine.layout(request) -> LayoutResult` from `excali_builder.layout.engines.base`. The neutral request describes nodes, containment, port sizes/sides/order, edge endpoints and label dimensions, the requested routing mode, spacing, direction, a deterministic seed, and a timeout. The result contains:
 
 - `boxes`: absolute scene coordinates for every requested node, including ports;
 - `routes`: source-to-target absolute polylines and optional label rectangles, keyed by the original edge IDs;
 - `port_sides`: the chosen side for each port.
 
-The common validator checks IDs, finite geometry, containment, overlaps, endpoint attachment, and fixed sizes/sides. The common pipeline handles candidate generation, route scoring, label placement, persistence, and updates around fixed user geometry. The adapter must respect its timeout and must not modify source data or write diagram files.
+The common validator checks IDs, finite geometry, containment, overlaps, endpoint attachment, fixed sizes/sides/orders, and shared part geometry. The common pipeline handles candidate generation, collective template search, route scoring, label placement, persistence, and updates around fixed user geometry. Requests include semantic template groups and relative port positions; ELK uses fixed port positions, and the common pipeline restores template internals for adapters before rerouting and scoring. The adapter must respect its timeout and must not modify source data or write diagram files.
 
 Register a factory in a Python application:
 

@@ -156,7 +156,10 @@ class ExcaliBuilder:
         return str(output_path)
 
     def _apply_wiring_layout(self, graph, config, folder, reset=False, compact=False):
-        from .layout.quality import measure_quality, validate_result
+        import time
+
+        from .layout.quality import crossing_quality_key, measure_quality, quality_key, validate_result
+        from .layout.parts import describe_parts, optimize_parts
         from .layout.routing import place_labels, route_fixed
         from .layout.state import load_state, topology_signature
         from .layout.wiring import (
@@ -213,9 +216,14 @@ class ExcaliBuilder:
                 route_fixed(request, result, missing_routes)
             elif any(edge.label_width and not result.routes[edge.id].label for edge in request.edges):
                 place_labels(request, result)
+            if result.metrics.get("part_template_search_required"):
+                key = crossing_quality_key if config.layout.engine == "hybrid" else quality_key
+                optimize_parts(request, result, key, time.monotonic() + request.timeout)
             validate_result(request, result)
             result.metrics = measure_quality(request, result)
             result.metrics["engine"] = config.layout.engine
+            if request.part_templates:
+                result.metrics["part_templates"] = describe_parts(request, result)
         apply_result(graph, result)
         return result
 

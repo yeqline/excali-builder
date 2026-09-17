@@ -28,6 +28,18 @@ class LayoutNode:
     group: Optional[str] = None
     size_locked: bool = False
     side_locked: bool = False
+    part_template: Optional[str] = None
+    port_role: Optional[str] = None
+    fixed_position: Optional[Point] = None
+
+
+@dataclass
+class PartTemplate:
+    roles: List[str]
+    instances: Dict[str, Dict[str, str]]
+    optimize: bool = True
+    locked_sides: Dict[str, str] = field(default_factory=dict)
+    locked_orders: List[List[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +65,8 @@ class LayoutRequest:
     seed: int = 1
     timeout: float = 30
     engine_options: Dict[str, Any] = field(default_factory=dict)
+    edge_routing: str = "straight"
+    part_templates: Dict[str, PartTemplate] = field(default_factory=dict)
 
 
 @dataclass

@@ -8,7 +8,7 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Preserve manual layouts**: Edit positions in Excalidraw, and they persist across rebuilds
 - **Type-based styling**: Define visual styles per node/edge type in config files
 - **Deterministic initial layout**: Fresh builds use free-form, tree, DAG, or port-aware wiring placement
-- **Optimize wiring diagrams**: Arrange devices, ports, and orthogonal wire routes with replaceable layout engines; restore the preceding layout with one action. See the [wiring layout guide](docs/wiring-layout-guide.md).
+- **Optimize wiring diagrams**: Arrange devices, ports, and readable straight connections with replaceable layout engines; orthogonal routing remains available when obstacle avoidance matters. CSV model numbers automatically enforce one optimized arrangement across identical parts, matching ports by their existing names. Restore the preceding layout with one action. See the [wiring layout guide](docs/wiring-layout-guide.md).
 - **Multiple rendering modes for edges**: Draw arrows with `line`, visually group nodes with `group`, or draw enclosing groups with `enclosing_group`
 - **Visible relationship labels**: Render non-empty line-edge labels by default, with per-type styling and opt-out
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
@@ -78,6 +78,8 @@ uv run excali-builder --full-refresh path/to/your-diagram-folder
 
 # Optimize a CSV wiring diagram (or convert a CSV tree diagram to wiring)
 uv run excali-builder optimize path/to/your-diagram-folder --engine elk
+# Use the crossing-aware alternative for straight-line wiring
+uv run excali-builder optimize path/to/your-diagram-folder --engine hybrid
 
 # Restore the layout from immediately before that optimization
 uv run excali-builder restore-layout path/to/your-diagram-folder

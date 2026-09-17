@@ -2,11 +2,12 @@
 
 import csv
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+from ..config.loader import ConfigLoader
+from ..core.edge import ConnectionType, Edge
 from ..core.graph import Graph
 from ..core.node import Node
-from ..core.edge import Edge, ConnectionType
-from ..config.loader import ConfigLoader
 from .base import BaseParser
 
 
@@ -31,12 +32,16 @@ class CSVParser(BaseParser):
                     label = (row.get("node_title") or "").strip() or node_id
                     node_type = (row.get("node_type") or "default").strip()
                     node_text = (row.get("node_text") or "").strip()
+                    metadata = {"text": node_text} if node_text else {}
+                    model_number = (row.get("model_number") or "").strip()
+                    if model_number:
+                        metadata["model_number"] = model_number
 
                     node = Node(
                         id=node_id,
                         label=label,
                         type=node_type,
-                        metadata={"text": node_text} if node_text else {},
+                        metadata=metadata,
                     )
                     graph.add_node(node)
 

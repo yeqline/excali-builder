@@ -29,12 +29,23 @@ your-diagram/
 
 ### node.csv
 
-Defines all nodes in your diagram. Required columns:
+Defines all nodes in your diagram. Columns:
 
 - `node_id`: Unique identifier for the node (used for syncing positions)
 - `node_type`: Type of node (used for styling lookup in `node_config.json`)
 - `node_title`: Title text displayed on the first line of the node
 - `node_text`: Additional text displayed on the second line of the node (optional)
+- `model_number`: Optional physical part model on a device row. Instances of
+  the same part share this value; their `node_id` values remain unique. Leave
+  it blank on contained ports, whose existing titles identify corresponding
+  connectors. Those titles must be unique within a device and consistent
+  across instances of the same model.
+
+The wiring layout discovers identical parts from `model_number` and optimizes one
+shared port arrangement for all instances. No configuration-based instance
+mapping is required. See [shared part arrangements](wiring-layout-guide.md#shared-arrangements-for-identical-parts)
+for an annotated CSV example. Existing CSVs without this optional column retain
+independent port placement.
 
 **Example:**
 

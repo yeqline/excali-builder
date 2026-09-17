@@ -12,15 +12,17 @@ from typing import Dict, Optional
 from ..core.edge import ConnectionType
 from .engines import get_engine
 from .engines.base import Box, LayoutEdge, LayoutNode, LayoutRequest, LayoutResult
+from .parts import apply_part_geometry, describe_parts, optimize_parts, prepare_parts, restore_parts
 from .quality import (
     ancestors,
+    crossing_quality_key,
     measure_quality,
     overlaps,
     quality_key,
     segment_hits_box,
     validate_result,
 )
-from .routing import place_labels, simplify
+from .routing import place_labels, route_straight, simplify
 
 
 def make_request(graph, config) -> LayoutRequest:
@@ -117,6 +119,7 @@ def make_request(graph, config) -> LayoutRequest:
         settings.padding,
         timeout=settings.timeout_seconds,
         engine_options=settings.engine_options,
+        edge_routing=settings.edge_routing,
     )
     ancestors(request)
     # Opposing port banks must fit beside one another inside the device.
@@ -134,6 +137,7 @@ def make_request(graph, config) -> LayoutRequest:
                 )
             node.width = max(node.width, minimum_width)
             node.height = max(node.height, minimum_height)
+    prepare_parts(request, settings, graph)
     return request
 
 
@@ -146,29 +150,55 @@ def optimize(
     best = None
     failures = []
     attempted = 0
+    candidate_key = crossing_quality_key if engine_name == "hybrid" else quality_key
     for index in range(candidates):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         candidate_request = copy.deepcopy(request)
+        if best is not None:
+            restore_parts(candidate_request, best.metrics)
         candidate_request.seed = index + 1
         candidate_request.timeout = remaining
+        # The hybrid engine performs its own orientation search so that its
+        # crossing score uses the same endpoint order as the final straight
+        # routes. Avoid reversing edges twice around that engine.
         reversed_edges = (
-            _breadth_orientation(candidate_request, fixed_sides) if index % 4 in {1, 2} else set()
+            _breadth_orientation(candidate_request, fixed_sides)
+            if engine_name != "hybrid" and index % 4 in {1, 2}
+            else set()
         )
         if best is not None and index % 4 in {2, 3}:
             _face_neighbors(candidate_request, best, fixed_sides)
         attempted += 1
         try:
             result = engine.layout(candidate_request)
-            for edge_id in reversed_edges:
-                result.routes[edge_id].points.reverse()
-            for route in result.routes.values():
-                route.points = simplify(route.points)
+            scoring_request = copy.deepcopy(candidate_request)
+            scoring_request.edges = copy.deepcopy(request.edges)
+            moved_ports = apply_part_geometry(scoring_request, result)
+            if request.edge_routing == "straight":
+                route_straight(request, result)
+            else:
+                for edge_id in reversed_edges:
+                    result.routes[edge_id].points.reverse()
+                for route in result.routes.values():
+                    route.points = simplify(route.points)
+                if moved_ports:
+                    from .routing import route_fixed
+
+                    routing_request = copy.copy(scoring_request)
+                    routing_request.timeout = max(0.001, deadline - time.monotonic())
+                    route_fixed(routing_request, result)
             validate_result(request, result)
-            place_labels(request, result)
+            if request.edge_routing != "straight":
+                place_labels(request, result)
+            template_trials = optimize_parts(scoring_request, result, candidate_key, deadline)
+            validate_result(request, result)
             result.metrics = measure_quality(request, result)
-            if best is None or quality_key(result.metrics) < quality_key(best.metrics):
+            if request.part_templates:
+                result.metrics["part_templates"] = describe_parts(scoring_request, result)
+                result.metrics["part_template_trials"] = template_trials
+            if best is None or candidate_key(result.metrics) < candidate_key(best.metrics):
                 best = result
         except (ValueError, RuntimeError) as exc:
             failures.append(str(exc))
@@ -229,7 +259,8 @@ def _breadth_orientation(request, fixed_sides):
         outs[edge.source] += 1
         ins[edge.target] += 1
     for node in request.nodes:
-        if node.is_port and node.id not in fixed_sides and node.order is None:
+        if (node.is_port and not node.side_locked and node.fixed_position is None
+                and node.id not in fixed_sides and node.order is None):
             node.side = "EAST" if outs[node.id] > ins[node.id] else "WEST"
             if request.direction == "right-left":
                 node.side = "WEST" if node.side == "EAST" else "EAST"
@@ -243,7 +274,8 @@ def _face_neighbors(request, result, fixed_sides):
         neighbors.setdefault(edge.source, []).append((edge.target, weight))
         neighbors.setdefault(edge.target, []).append((edge.source, weight))
     for node in request.nodes:
-        if not node.is_port or node.id in fixed_sides or node.order is not None:
+        if (not node.is_port or node.side_locked or node.fixed_position is not None
+                or node.id in fixed_sides or node.order is not None):
             continue
         connected = neighbors.get(node.id, [])
         if not connected:
@@ -271,6 +303,12 @@ def existing_layout(graph, request, saved: Optional[LayoutResult]) -> LayoutResu
                 "WEST" if box.x + box.width / 2 < parent.x + parent.width / 2 else "EAST"
             )
     result = LayoutResult(boxes, {}, sides)
+    restored = restore_parts(request, saved.metrics) if saved else set()
+    result.metrics["part_template_search_required"] = any(
+        template.optimize and template.instances and name not in restored
+        for name, template in request.part_templates.items()
+    )
+    apply_part_geometry(request, result, resize_containers=True)
     if saved:
         changed = {
             key
@@ -285,6 +323,13 @@ def existing_layout(graph, request, saved: Optional[LayoutResult]) -> LayoutResu
         for edge in request.edges:
             route = saved.routes.get(edge.id)
             if not route or edge.source in changed or edge.target in changed:
+                continue
+            if request.edge_routing == "straight" and len(route.points) != 2:
+                continue
+            if request.edge_routing == "orthogonal" and any(
+                abs(a[0] - b[0]) > 0.01 and abs(a[1] - b[1]) > 0.01
+                for a, b in zip(route.points, route.points[1:])
+            ):
                 continue
             allowed = {edge.source, edge.target} | ancestry[edge.source] | ancestry[edge.target]
             if any(
@@ -325,7 +370,11 @@ def place_additions(request: LayoutRequest, result: LayoutResult, candidate: Lay
     for key in roots:
         node = specs[key]
         descendants = {child for child in missing if key in ancestry[child]} | {key}
-        if node.parent_id and node.is_port:
+        if node.parent_id and node.fixed_position is not None:
+            parent = result.boxes[node.parent_id]
+            x, y = node.fixed_position
+            position = Box(parent.x + x, parent.y + y, node.width, node.height)
+        elif node.parent_id and node.is_port:
             parent = result.boxes[node.parent_id]
             siblings = [
                 box

@@ -21,8 +21,10 @@ def _discover() -> None:
     if _discovered:
         return
     from .elk import ElkEngine
+    from .hybrid import HybridEngine
 
     _factories.setdefault("elk", ElkEngine)
+    _factories.setdefault("hybrid", HybridEngine)
     entries = metadata.entry_points()
     entries = (
         entries.select(group="excali_builder.layout_engines")

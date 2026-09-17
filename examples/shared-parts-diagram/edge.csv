@@ -1,0 +1,13 @@
+from,to,edge_type,label
+motor_x,motor_x_encoder,parent_child,
+motor_x,motor_x_phase,parent_child,
+motor_y,motor_y_encoder,parent_child,
+motor_y,motor_y_phase,parent_child,
+driver_x,driver_x_encoder,parent_child,
+driver_x,driver_x_phase,parent_child,
+driver_y,driver_y_encoder,parent_child,
+driver_y,driver_y_phase,parent_child,
+driver_x_phase,motor_x_phase,phase,Motor conductors
+driver_y_phase,motor_y_phase,phase,Motor conductors
+motor_x_encoder,driver_x_encoder,encoder,Feedback
+motor_y_encoder,driver_y_encoder,encoder,Feedback

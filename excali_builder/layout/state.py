@@ -34,6 +34,7 @@ def topology_signature(graph, config) -> str:
                 n.id,
                 n.label,
                 n.type,
+                n.metadata.get("model_number"),
                 n.metadata.get("text"),
                 n.metadata.get("content"),
                 n.metadata.get("font_size")

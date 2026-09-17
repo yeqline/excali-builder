@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from excali_builder.builder import ExcaliBuilder
 from excali_builder.cli import parse_args
-from excali_builder.layout.engines import register_engine
+from excali_builder.layout.engines import available_engines, get_engine, register_engine
 from excali_builder.layout.engines.base import (
     Box,
     LayoutEdge,
@@ -18,9 +18,10 @@ from excali_builder.layout.engines.base import (
     Route,
 )
 from excali_builder.layout.engines.elk import RUNTIME, ElkEngine
+from excali_builder.layout.engines.hybrid import HybridEngine
 from excali_builder.layout.operations import OUTPUT_FILES, optimize_folder, restore_folder
 from excali_builder.layout.quality import measure_quality, validate_result
-from excali_builder.layout.routing import route_fixed
+from excali_builder.layout.routing import route_fixed, route_straight
 from excali_builder.layout.state import STATE_FILE
 from excali_builder.layout.wiring import place_additions
 from excali_builder.serve.server import ServeState
@@ -56,7 +57,7 @@ class AlternateEngine(LayoutEngine):
         return result
 
 
-def write_fixture(folder, algorithm="tree", engine="elk"):
+def write_fixture(folder, algorithm="tree", engine="elk", edge_routing="straight"):
     (folder / "node.csv").write_text(
         "node_id,node_type,node_title,node_text\n"
         "a,device,Supply,Source device\n"
@@ -74,7 +75,11 @@ def write_fixture(folder, algorithm="tree", engine="elk"):
         json.dumps(
             {
                 "parser_type": "csv",
-                "layout": {"algorithm": algorithm, "engine": engine, "wiring": {"candidates": 1}},
+                "layout": {
+                    "algorithm": algorithm,
+                    "engine": engine,
+                    "wiring": {"candidates": 1, "edge_routing": edge_routing},
+                },
             }
         )
     )
@@ -97,6 +102,43 @@ class WiringTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_builtin_hybrid_engine_is_available_to_selectors(self):
+        self.assertIn("elk", available_engines())
+        self.assertIsInstance(get_engine("hybrid"), HybridEngine)
+
+    def test_hybrid_sifting_reduces_straight_line_crossings(self):
+        request = LayoutRequest(
+            [
+                LayoutNode("left_a", 100, 50),
+                LayoutNode("left_b", 100, 50),
+                LayoutNode("right_a", 100, 50),
+                LayoutNode("right_b", 100, 50),
+            ],
+            [
+                LayoutEdge("wire_a", "left_a", "right_a"),
+                LayoutEdge("wire_b", "left_b", "right_b"),
+            ],
+            node_spacing=80,
+            layer_spacing=160,
+            edge_routing="straight",
+        )
+        result = LayoutResult(
+            {
+                "left_a": Box(0, 0, 100, 50),
+                "left_b": Box(0, 100, 100, 50),
+                "right_a": Box(500, 100, 100, 50),
+                "right_b": Box(500, 0, 100, 50),
+            },
+            {},
+        )
+        route_straight(request, result)
+        before = measure_quality(request, result)["crossings"]
+        HybridEngine._sift(result, request)
+        route_straight(request, result)
+        after = measure_quality(request, result)["crossings"]
+        self.assertEqual(before, 1)
+        self.assertEqual(after, 0)
 
     def test_alternative_engine_supports_initial_layout_and_cached_rebuild(self):
         write_fixture(self.folder, "wiring", "test-alternate")
@@ -192,7 +234,16 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(AlternateEngine.calls, 1)
         state = json.loads((self.folder / STATE_FILE).read_text())["result"]
         route = next(iter(state["routes"].values()))
-        self.assertGreaterEqual(len(route["points"]), 4)
+        self.assertEqual(len(route["points"]), 2)
+
+    def test_optimized_routes_are_straight_and_scored_as_rendered(self):
+        write_fixture(self.folder, "wiring", "test-alternate")
+        builder = ExcaliBuilder()
+        builder.build_from_folder(str(self.folder))
+        state = json.loads((self.folder / STATE_FILE).read_text())["result"]
+        route = next(iter(state["routes"].values()))
+        self.assertEqual(len(route["points"]), 2)
+        self.assertEqual(state["metrics"]["bends"], 0)
 
     def test_invalid_containment_rejected_before_engine_runs(self):
         write_fixture(self.folder, "wiring", "test-alternate")
@@ -210,6 +261,7 @@ class WiringTests(unittest.TestCase):
                 LayoutNode("obstacle", 100, 140),
             ],
             [LayoutEdge("wire", "a", "b")],
+            edge_routing="orthogonal",
         )
         result = LayoutResult(
             {
@@ -286,7 +338,7 @@ class WiringTests(unittest.TestCase):
             )
 
     def test_manual_orthogonal_bends_survive_viewer_save_and_reload(self):
-        write_fixture(self.folder, "wiring", "test-alternate")
+        write_fixture(self.folder, "wiring", "test-alternate", "orthogonal")
         state = ServeState(self.folder, 1)
         state.initial_build()
         elements = json.loads(state.output_path.read_text())["elements"]
@@ -417,6 +469,9 @@ class ElkIntegrationTests(unittest.TestCase):
             builder = ExcaliBuilder()
             builder.build_from_folder(str(folder))
             before = json.loads((folder / "positions.json").read_text())
+            initial_routes = json.loads((folder / STATE_FILE).read_text())["result"]["routes"]
+            self.assertTrue(initial_routes)
+            self.assertTrue(all(len(route["points"]) == 2 for route in initial_routes.values()))
             with (folder / "node.csv").open("a") as handle:
                 handle.write("extra,port,Spare,\n")
             with (folder / "edge.csv").open("a") as handle:

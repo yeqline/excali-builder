@@ -1,0 +1,7 @@
+{
+  "parser_type": "csv",
+  "layout": {
+    "algorithm": "wiring",
+    "engine": "hybrid"
+  }
+}

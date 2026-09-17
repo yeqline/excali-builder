@@ -16,7 +16,7 @@ class ElkEngine(LayoutEngine):
         node = shutil.which("node")
         if not node or not (RUNTIME / "node_modules/elkjs/lib/elk.bundled.js").exists():
             raise RuntimeError(
-                "The ELK engine needs Node.js and its optional local dependency. "
+                "The ELK-backed wiring engines need Node.js and their optional local dependency. "
                 f"Install Node.js, then run: npm ci --prefix '{RUNTIME}' --ignore-scripts"
             )
         try:
@@ -46,7 +46,9 @@ class ElkEngine(LayoutEngine):
             "layoutOptions": {
                 "elk.algorithm": "layered",
                 "elk.direction": directions.get(request.direction, "RIGHT"),
-                "elk.edgeRouting": "ORTHOGONAL",
+                "elk.edgeRouting": (
+                    "POLYLINE" if request.edge_routing == "straight" else "ORTHOGONAL"
+                ),
                 "elk.hierarchyHandling": "INCLUDE_CHILDREN",
                 "elk.randomSeed": str(request.seed),
                 "elk.spacing.nodeNode": str(request.node_spacing),
@@ -79,6 +81,8 @@ class ElkEngine(LayoutEngine):
                     "elk.port.side": side,
                     "elk.port.borderOffset": str(-depth - request.padding),
                 }
+                if n.fixed_position is not None:
+                    obj["x"], obj["y"] = n.fixed_position
                 siblings = [p for p in request.nodes if p.parent_id == n.parent_id and p.is_port]
                 if any(p.order is not None for p in siblings):
                     index = (
@@ -91,7 +95,9 @@ class ElkEngine(LayoutEngine):
                 ports = [p for p in request.nodes if p.parent_id == n.id and p.is_port]
                 obj.update({"children": [], "ports": []})
                 obj["layoutOptions"] = {
-                    "elk.portConstraints": "FIXED_ORDER"
+                    "elk.portConstraints": "FIXED_POS"
+                    if ports and all(p.fixed_position is not None for p in ports)
+                    else "FIXED_ORDER"
                     if any(p.order is not None for p in ports)
                     else "FIXED_SIDE",
                     "elk.nodeSize.constraints": "[]" if n.size_locked else "[PORTS,MINIMUM_SIZE]",

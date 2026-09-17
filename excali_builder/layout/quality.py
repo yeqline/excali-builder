@@ -106,6 +106,58 @@ def validate_result(request: LayoutRequest, result: LayoutResult) -> None:
                 or box.y + box.height > parent.y + parent.height + EPSILON
             ):
                 raise ValueError(f"Layout placed '{node.id}' outside its container")
+            template = request.part_templates.get(node.part_template)
+            if node.fixed_position is not None and (template is None or not template.optimize):
+                x, y = node.fixed_position
+                if abs(box.x - parent.x - x) > EPSILON or abs(box.y - parent.y - y) > EPSILON:
+                    raise ValueError(f"Layout changed the fixed port position of '{node.id}'")
+            if node.is_port and node.side_locked:
+                side = result.port_sides[node.id]
+                delta = box.x + box.width / 2 - parent.x - parent.width / 2
+                if (side == "WEST" and delta > EPSILON) or (side == "EAST" and delta < -EPSILON):
+                    raise ValueError(f"Layout placed '{node.id}' in the wrong port bank")
+    # Per-instance orders are constraints too, even for third-party adapters.
+    for a, b in combinations((n for n in request.nodes if n.is_port), 2):
+        if a.parent_id != b.parent_id or a.part_template or b.part_template:
+            continue
+        if result.port_sides.get(a.id) != result.port_sides.get(b.id):
+            continue
+        if a.order is None and b.order is None:
+            continue
+        first, second = sorted((a, b), key=lambda n: n.order if n.order is not None else math.inf)
+        if result.boxes[first.id].y >= result.boxes[second.id].y - EPSILON:
+            raise ValueError(f"Layout changed the port order of '{first.parent_id}'")
+    for name, template in request.part_templates.items():
+        reference = {}
+        for parent_id, ports in template.instances.items():
+            parent = result.boxes[parent_id]
+            for role, port_id in ports.items():
+                box = result.boxes[port_id]
+                side = result.port_sides.get(port_id)
+                if side not in {"WEST", "EAST"}:
+                    raise ValueError(f"Layout omitted the bank for '{port_id}'")
+                if role in template.locked_sides and side != template.locked_sides[role]:
+                    raise ValueError(f"Layout changed the fixed port side of '{port_id}'")
+                local = (box.x - parent.x, box.y - parent.y, box.width, box.height)
+                if role in reference:
+                    expected_side, expected = reference[role]
+                    if side != expected_side or any(
+                        abs(a - b) > EPSILON for a, b in zip(local, expected)
+                    ):
+                        raise ValueError(
+                            f"Layout changed shared geometry for '{name}' role '{role}'"
+                        )
+                reference[role] = side, local
+                delta = box.x + box.width / 2 - parent.x - parent.width / 2
+                if (side == "WEST" and delta > EPSILON) or (side == "EAST" and delta < -EPSILON):
+                    raise ValueError(f"Layout placed '{port_id}' in the wrong port bank")
+            for order in template.locked_orders:
+                for first, second in combinations(order, 2):
+                    a, b = ports[first], ports[second]
+                    if result.port_sides[a] == result.port_sides[b] and (
+                        result.boxes[a].y >= result.boxes[b].y - EPSILON
+                    ):
+                        raise ValueError(f"Layout changed the fixed order for '{name}'")
     for a, b in combinations(result.boxes, 2):
         if a in ancestry[b] or b in ancestry[a]:
             continue
@@ -209,6 +261,17 @@ def quality_key(metrics: Dict[str, float]) -> tuple:
         metrics["obstructions"],
         metrics["label_collisions"],
         metrics["crossings"] + metrics["shared_length"] / 80,
+        metrics["aspect_ratio"],
+        metrics["bends"] + metrics["wire_length"] / 100,
+    )
+
+
+def crossing_quality_key(metrics: Dict[str, float]) -> tuple:
+    """Rank layouts for engines whose primary objective is uncrossed wires."""
+    return (
+        metrics["crossings"] + metrics["shared_length"] / 80,
+        metrics["obstructions"],
+        metrics["label_collisions"],
         metrics["aspect_ratio"],
         metrics["bends"] + metrics["wire_length"] / 100,
     )
