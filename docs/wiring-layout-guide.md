@@ -16,7 +16,7 @@ Python package installations also include the runtime manifest and runner. Find 
 python -c 'from excali_builder.layout.engines.elk import RUNTIME; print(RUNTIME)'
 ```
 
-Run `npm ci --prefix <runtime-directory> --ignore-scripts` there. The dependency is pinned in `package-lock.json`. Layout runs locally; it requires no external layout service. The built-in `elk` and `hybrid` wiring engines use this runtime. Other layouts do not require Node.js or ELK.
+Run `npm ci --prefix <runtime-directory> --ignore-scripts` there. The dependency is pinned in `package-lock.json`. Layout runs locally; it requires no external layout service. The built-in `elk`, `hybrid`, and `crossing` wiring engines use this runtime. Other layouts do not require Node.js or ELK.
 
 ## Initial layout and manual optimization
 
@@ -66,10 +66,83 @@ The built-in `elk` engine provides ELK's layered placement. The `hybrid` engine
 uses the same compound, port-aware ELK seed and then searches port-side and
 device-order alternatives with a crossing-aware sifting pass. It is intended
 for straight routing, where reducing wire crossings is the primary objective.
-Select either engine in the viewer or pass `--engine elk` / `--engine hybrid` to
+Select an engine in the viewer or pass `--engine elk` / `--engine hybrid` to
 the CLI. To let the hybrid adapter try more independent ELK seeds, set
 `layout.wiring.engine_options.hybrid_candidates` (from 1 to 8); the normal
 `wiring.candidates` setting still controls the common outer candidate search.
+
+The `crossing` engine searches device positions in both axes and can replace a
+small number of costly wires with paired reference tags. It requires straight
+routing. Select `crossing` in the viewer or run:
+
+```sh
+excali-builder optimize <diagram-folder> --engine crossing
+```
+
+It starts from port-aware ELK placement, then tries translations and exchanges
+of entire device subtrees. Every port and nested device moves with its owner;
+fixed sizes, terminal constraints, and shared model arrangements remain in
+effect. Shrinking search steps refine the placement. The common pipeline also
+searches shared port arrangements across all instances of each model.
+
+For each placement, the reference selector scores how many remaining crossings
+and obstructions each wire causes. It tries the highest-benefit wires first,
+places a pair of reference tags, and accepts a replacement only when the
+rendered drawing improves. It recalculates marginal conflicts after each
+replacement, then can refine device placement with those references in place.
+This is a bounded local-search heuristic, not an exact crossing-number or
+minimum-vertex-cover solver. It uses ELK for its compound seed rather than a
+point-only force layout. The direction setting guides that seed; final devices
+are not restricted to layers.
+
+Configure the engine under `layout.wiring.engine_options`:
+
+```json
+{
+  "crossing_max_connectors": 3,
+  "crossing_max_connectors_per_node": 2,
+  "crossing_passes": 6,
+  "crossing_protected_edges": [],
+  "crossing_edge_costs": {}
+}
+```
+
+These are the defaults. `crossing_max_connectors` counts replaced **connections**,
+each represented by two tags; it is a ceiling, not a target. Set it to `0` to
+optimize placement while keeping every wire drawn in full. The per-node limit
+applies to electrical endpoints (usually ports). `crossing_passes` bounds the
+initial movement passes; after references are selected, up to half as many
+additional passes refine the result. Set it to `0` to use the seed positions
+with reference selection only. The common `timeout_seconds` budget and
+`candidates` settings also apply. Large drawings prioritize the devices with
+the most conflicts and limit reference-placement trials per selection step;
+they can finish with unresolved crossings.
+
+Use original wire IDs in `crossing_protected_edges` to require complete lines.
+`crossing_edge_costs` maps wire IDs to positive costs (default `1`); larger costs
+discourage replacing important connections. CSV builds record their stable
+wire IDs as keys under `result.routes` in `wiring-layout.json`. Unknown IDs and
+invalid option values are rejected. The score charges 10 per crossing, 20 per
+obstruction or label collision, one per eight units of unrelated shared wire,
+and three times the cost of each replaced connection. Remaining ties prefer
+fewer references, a less extreme aspect ratio, and shorter visible wires.
+
+Each tag names the remote device/port hierarchy and unique node ID, includes
+the visible wire label, and links to the remote port. Use the tag's link action
+in the local viewer to jump there. Wire color, stroke style, original endpoint
+arrowheads, and original edge identity are retained on the two short leaders.
+Tags are placed outside device boxes, with leaders checked against unrelated
+nodes and device headings. A wire stays complete when suitable tags cannot fit.
+Tags and leaders participate in quality scoring; the hidden span does not.
+
+References are stored in `wiring-layout.json`, not in source CSVs or as extra
+source nodes. Ordinary layout saves keep device positions and the selected
+reference connections, refreshing affected leaders and tags. Optimize searches
+for a new selection; source or configuration changes also reconsider references
+against the current geometry and budget. Tag geometry is generated; manual tag
+moves are not saved as independent nodes. Selecting another engine or setting the
+budget to zero restores full lines. Optimize/restore includes the paired
+references along with the rest of the layout.
 
 Optimization updates `config.json` to select the wiring layout and chosen engine. It computes the result in a temporary copy before publishing it. Device containers can shrink or grow to fit their ports and headings; ordinary saved node sizes are retained. Containers render as rectangles so their bounds match the routing obstacles. All node and wire IDs, source text, colors, and electrical endpoints are retained.
 
@@ -155,12 +228,12 @@ titles, and mismatched variants fail with a source-data error. Templates
 currently describe containers containing only ports.
 
 These rules apply to all engines selected by `layout.engine`, including `elk`,
-`hybrid`, and registered adapters, on the `wiring` pipeline. The independent
+`hybrid`, `crossing`, and registered adapters, on the `wiring` pipeline. The independent
 tree, DAG, and free-form layouts do not perform compound port optimization.
 See [the shared-parts example](../examples/shared-parts-diagram/README.md) for
 a runnable diagram.
 
-Wire labels wrap at `label_max_width`. `edge_routing: "straight"` draws every generated connection as one segment and scores layout candidates using those same segments. This favors a visually simple connection model, but a dense or tightly constrained diagram can still force a straight connection across another node. The optimizer reports those cases as obstructions and prefers candidates with fewer of them.
+Wire labels wrap at `label_max_width`. `edge_routing: "straight"` draws each complete connection as one segment and scores layout candidates using those same segments. Reference connections use two short straight leaders and paired tags instead. This favors a visually simple connection model, but a dense or tightly constrained diagram can still force a straight connection across another node. The optimizer reports those cases as obstructions and prefers candidates with fewer of them.
 
 Set `edge_routing: "orthogonal"` when avoiding unrelated devices and ports is more important than minimizing bends. Orthogonal mode routes around obstacles and preserves manually edited right-angle bends. A common segment is distinguished in the quality report from an overlap between wires that do not share a terminal. No electrical nets are inferred from colors or edge type names.
 
@@ -177,6 +250,14 @@ Implement `LayoutEngine.layout(request) -> LayoutResult` from `excali_builder.la
 - `port_sides`: the chosen side for each port.
 
 The common validator checks IDs, finite geometry, containment, overlaps, endpoint attachment, fixed sizes/sides/orders, and shared part geometry. The common pipeline handles candidate generation, collective template search, route scoring, label placement, persistence, and updates around fixed user geometry. Requests include semantic template groups and relative port positions; ELK uses fixed port positions, and the common pipeline restores template internals for adapters before rerouting and scoring. The adapter must respect its timeout and must not modify source data or write diagram files.
+
+Routes may also carry a `connectors` pair for straight reference connections.
+The pair is ordered source then target; each leader runs outward from its local
+endpoint to its tag. The logical `points` span remains source-to-target, and
+each connector records its remote `target`. Use `route_segments(route)` to
+inspect the visible lines. The common validator checks both references and
+their attachments, and the exporter preserves the original source/target
+arrowhead directions when rendering the leaders.
 
 Register a factory in a Python application:
 
@@ -200,4 +281,4 @@ Adapter-specific settings can be passed through `layout.wiring.engine_options`. 
 
 ## Validation
 
-Run `python -m unittest discover -s tests`. Tests cover an independent replacement engine, initial layout, cached rebuilds, movement routing, nested containment, port constraints, optimization rollback, restoration, and rejection of stale viewer saves. ELK-specific integration tests run when its optional local runtime is installed.
+Run `python -m unittest discover -s tests`. Tests cover an independent replacement engine, initial layout, cached rebuilds, movement routing, nested containment, port constraints, optimization rollback, restoration, and rejection of stale viewer saves. Crossing-engine tests also cover movement, reference budgets, protected wires, visible scoring, reference export and persistence, engine switching, and shared part geometry. ELK-backed integration tests run when the optional local runtime is installed.

@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from .engines.base import Box, LayoutResult, Route
+from .engines.base import Box, Connector, LayoutResult, Route
 
 STATE_FILE = "wiring-layout.json"
 
@@ -37,8 +37,8 @@ def topology_signature(graph, config) -> str:
                 n.metadata.get("model_number"),
                 n.metadata.get("text"),
                 n.metadata.get("content"),
-                n.metadata.get("font_size")
-                or ConfigLoader.get_node_config(config, n.type).font_size,
+                float(n.metadata.get("font_size")
+                      or ConfigLoader.get_node_config(config, n.type).font_size),
             )
             for n in sorted(graph.nodes.values(), key=lambda n: n.id)
         ],
@@ -61,8 +61,11 @@ def load_state(folder: Path, signature: str):
             return None
         result = decode_result(data["result"])
         if data.get("signature") != signature:
+            # The builder consumes this transient flag before persisting again.
+            result.metrics["_signature_changed"] = True
             for route in result.routes.values():
                 route.label = None
+                route.connectors = []
         return result
     except (ValueError, TypeError, KeyError):
         return None
@@ -75,6 +78,13 @@ def decode_result(data) -> LayoutResult:
             key: Route(
                 [tuple(point) for point in value["points"]],
                 Box(**value["label"]) if value.get("label") else None,
+                [
+                    Connector(
+                        [tuple(point) for point in connector["points"]],
+                        Box(**connector["label"]), connector["text"], connector["target"],
+                    )
+                    for connector in value.get("connectors", [])
+                ],
             )
             for key, value in data["routes"].items()
         },
@@ -119,6 +129,8 @@ def capture_edited_routes(folder: Path, elements, baseline_elements) -> None:
         edge_id = element.get("customData", {}).get("edge_id")
         old = baseline.get(element.get("id"))
         if edge_id not in result.routes or not old:
+            continue
+        if result.routes[edge_id].connectors:
             continue
         if any(
             (element.get(key) or {}).get("elementId") != (old.get(key) or {}).get("elementId")

@@ -4,11 +4,13 @@ import hashlib
 import json
 import textwrap
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Set, Tuple
-from ..core.graph import Graph
-from ..core.edge import ConnectionType
-from ..config.schema import GlobalConfig, NodeTypeConfig, LineConnectionConfig
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import quote
+
 from ..config.loader import ConfigLoader
+from ..config.schema import GlobalConfig, LineConnectionConfig, NodeTypeConfig
+from ..core.edge import ConnectionType
+from ..core.graph import Graph
 from ..image_assets import build_data_url, get_image_mime_type
 
 
@@ -212,6 +214,20 @@ class ExcalidrawExporter:
                 if source_node and target_node:
                     source_element_id = node_element_map.get(edge.source_id)
                     target_element_id = node_element_map.get(edge.target_id)
+                    if edge.metadata.get("layout_route", {}).get("connectors"):
+                        references = self._create_wiring_references(
+                            source_node, target_node, edge, line_config, node_element_map,
+                        )
+                        elements.extend(references)
+                        for stub in (item for item in references if item["type"] == "arrow"):
+                            for field in ("startBinding", "endBinding"):
+                                binding = stub.get(field) or {}
+                                node_index = element_index_map.get(binding.get("elementId"))
+                                if node_index is not None:
+                                    elements[node_index].setdefault("boundElements", []).append(
+                                        {"id": stub["id"], "type": "arrow"}
+                                    )
+                        continue
                     arrow = self._create_arrow(
                         source_node,
                         target_node,
@@ -825,6 +841,66 @@ class ExcalidrawExporter:
             })
 
         return arrow
+
+    def _create_wiring_references(
+        self, source_node, target_node, edge, line_config, node_element_map,
+    ):
+        """Render two linked tags without changing graph nodes or electrical edges."""
+        elements = []
+        base_id = self._get_edge_element_id(edge)
+        tag_style = NodeTypeConfig(
+            color=line_config.color, backgroundColor="#ffffff",
+            font_size=line_config.label_font_size, padding=6,
+        )
+        for index, connector in enumerate(edge.metadata["layout_route"]["connectors"]):
+            side = "source" if index == 0 else "target"
+            tag_id, stub_id = f"{base_id}-{side}-reference", f"{base_id}-{side}-stub"
+            text_id = f"{tag_id}-text"
+            label = connector["label"]
+            tag = self._create_rectangle(
+                label["x"], label["y"], label["width"], label["height"],
+                None, tag_style, tag_id,
+            )
+            target = connector["target"]
+            tag.update({
+                "roughness": 0, "roundness": None,
+                "strokeWidth": line_config.stroke_width,
+                "strokeStyle": line_config.stroke_style,
+                "link": f"https://excalidraw.com/{quote(target, safe='')}"
+                        f"?element={node_element_map[target]}",
+                "boundElements": [
+                    {"id": text_id, "type": "text"}, {"id": stub_id, "type": "arrow"},
+                ],
+            })
+            text = self._create_text(
+                label["x"], label["y"], label["width"], label["height"],
+                connector["text"], tag_style.model_copy(update={
+                    "color": line_config.label_color or line_config.color,
+                }), tag_id, element_id=text_id,
+            )
+            points = connector["points"] if index == 0 else connector["points"][::-1]
+            start_id = node_element_map[edge.source_id] if index == 0 else tag_id
+            end_id = tag_id if index == 0 else node_element_map[edge.target_id]
+            display_edge = edge.model_copy(deep=True)
+            display_edge.metadata["layout_route"] = {"points": points}
+            stub = self._create_arrow(
+                source_node, target_node, display_edge, line_config, start_id, end_id,
+            )
+            stub.update({
+                "id": stub_id,
+                "startArrowhead": line_config.arrow_start if index == 0 else None,
+                "endArrowhead": line_config.arrow_end if index == 1 else None,
+            })
+            # Reference elements have edge identity only. They must never
+            # become editable source nodes during position/content sync.
+            for element in (stub, tag, text):
+                element["customData"] = {
+                    "edge_id": edge.id, "reference_side": side,
+                    "source_id": edge.source_id, "target_id": edge.target_id,
+                    "reference_target": target,
+                }
+            elements.extend((stub, tag, text))
+        return elements
 
     def _create_edge_label(
         self,

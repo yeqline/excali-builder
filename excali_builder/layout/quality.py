@@ -4,7 +4,7 @@ import math
 from itertools import combinations
 from typing import Dict, Tuple
 
-from .engines.base import Box, LayoutRequest, LayoutResult, Point
+from .engines.base import Box, LayoutRequest, LayoutResult, Point, route_segments
 
 EPSILON = 0.01
 
@@ -185,22 +185,60 @@ def validate_result(request: LayoutRequest, result: LayoutResult) -> None:
             or route.label.height <= 0
         ):
             raise ValueError(f"Layout returned an invalid label for '{edge.id}'")
+        if route.connectors:
+            if len(route.connectors) != 2 or request.edge_routing != "straight":
+                raise ValueError(f"Route '{edge.id}' needs two straight reference connectors")
+            for connector, local, remote in zip(
+                route.connectors, (edge.source, edge.target), (edge.target, edge.source)
+            ):
+                label = connector.label
+                if (
+                    connector.target != remote or not connector.text
+                    or len(connector.points) != 2
+                    or not all(
+                        len(p) == 2 and all(math.isfinite(v) for v in p)
+                        for p in connector.points
+                    )
+                    or not all(math.isfinite(v) for v in (
+                        label.x, label.y, label.width, label.height
+                    ))
+                    or min(label.width, label.height) <= 0
+                ):
+                    raise ValueError(f"Invalid reference connector for '{edge.id}'")
+                for point, box in zip(connector.points, (result.boxes[local], label)):
+                    if not (
+                        box.x - 2 <= point[0] <= box.x + box.width + 2
+                        and box.y - 2 <= point[1] <= box.y + box.height + 2
+                    ):
+                        raise ValueError(f"Detached reference connector for '{edge.id}'")
+                if any(overlaps(label, box) for box in result.boxes.values()):
+                    raise ValueError(f"Reference connector for '{edge.id}' overlaps a node")
 
 
 def measure_quality(request: LayoutRequest, result: LayoutResult) -> Dict[str, float]:
     ancestry = ancestors(request)
     edges = {edge.id: edge for edge in request.edges}
     segments = {
-        key: list(zip(route.points, route.points[1:])) for key, route in result.routes.items()
+        key: route_segments(route) for key, route in result.routes.items()
     }
     obstructions = crossings = label_collisions = 0
     shared_length = common_terminal_length = length = 0.0
     bends = 0
     labels = [(key, route.label) for key, route in result.routes.items() if route.label]
+    labels.extend(
+        (key, connector.label)
+        for key, route in result.routes.items() for connector in route.connectors
+    )
     for key, parts in segments.items():
         edge = edges[key]
         allowed = {edge.source, edge.target} | ancestry[edge.source] | ancestry[edge.target]
-        bends += max(0, len(parts) - 1)
+        if not result.routes[key].connectors:
+            bends += max(0, len(parts) - 1)
+        else:
+            for (a, b), (c, d) in combinations(parts, 2):
+                count, shared = segment_intersection(a, b, c, d)
+                crossings += count
+                shared_length += shared
         for a, b in parts:
             length += math.dist(a, b)
             obstructions += sum(
@@ -225,11 +263,13 @@ def measure_quality(request: LayoutRequest, result: LayoutResult) -> Dict[str, f
         label_collisions += sum(
             segment_hits_box(a, b, label)
             for other, parts in segments.items()
-            if other != key
+            if other != key or result.routes[key].connectors
             for a, b in parts
         )
     label_collisions += sum(overlaps(a, b) for (_, a), (_, b) in combinations(labels, 2))
-    boxes = list(result.boxes.values())
+    boxes = list(result.boxes.values()) + [
+        connector.label for route in result.routes.values() for connector in route.connectors
+    ]
     # Headers are obstacles even to wires connected to ports in the same device.
     for node in request.nodes:
         if node.header_height:
@@ -253,6 +293,11 @@ def measure_quality(request: LayoutRequest, result: LayoutResult) -> Dict[str, f
         "width": round(width, 1),
         "height": round(height, 1),
         "aspect_ratio": round(max(width, height) / max(1, min(width, height)), 2),
+        "reference_connections": sum(bool(route.connectors) for route in result.routes.values()),
+        "reference_cost": sum(
+            request.engine_options.get("crossing_edge_costs", {}).get(key, 1)
+            for key, route in result.routes.items() if route.connectors
+        ),
     }
 
 
@@ -274,4 +319,16 @@ def crossing_quality_key(metrics: Dict[str, float]) -> tuple:
         metrics["label_collisions"],
         metrics["aspect_ratio"],
         metrics["bends"] + metrics["wire_length"] / 100,
+    )
+
+
+def reference_quality_key(metrics: Dict[str, float]) -> tuple:
+    """Charge for lost visual continuity as well as the geometry actually drawn."""
+    return (
+        20 * (metrics["obstructions"] + metrics["label_collisions"])
+        + 10 * metrics["crossings"] + metrics["shared_length"] / 8
+        + 3 * metrics.get("reference_cost", 0),
+        metrics.get("reference_connections", 0),
+        metrics["aspect_ratio"],
+        metrics["wire_length"],
     )

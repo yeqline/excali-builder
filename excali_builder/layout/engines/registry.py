@@ -20,11 +20,13 @@ def _discover() -> None:
     global _discovered
     if _discovered:
         return
+    from .crossing import CrossingEngine
     from .elk import ElkEngine
     from .hybrid import HybridEngine
 
     _factories.setdefault("elk", ElkEngine)
     _factories.setdefault("hybrid", HybridEngine)
+    _factories.setdefault("crossing", CrossingEngine)
     entries = metadata.entry_points()
     entries = (
         entries.select(group="excali_builder.layout_engines")

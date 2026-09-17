@@ -11,7 +11,7 @@ from typing import Dict, Optional
 
 from ..core.edge import ConnectionType
 from .engines import get_engine
-from .engines.base import Box, LayoutEdge, LayoutNode, LayoutRequest, LayoutResult
+from .engines.base import Box, LayoutEdge, LayoutNode, LayoutRequest, LayoutResult, route_segments
 from .parts import apply_part_geometry, describe_parts, optimize_parts, prepare_parts, restore_parts
 from .quality import (
     ancestors,
@@ -19,6 +19,7 @@ from .quality import (
     measure_quality,
     overlaps,
     quality_key,
+    reference_quality_key,
     segment_hits_box,
     validate_result,
 )
@@ -77,6 +78,10 @@ def make_request(graph, config) -> LayoutRequest:
                 max(30, max(map(len, label_lines)) * style.label_font_size * 0.6) if label else 0,
                 style.label_font_size * 1.25 * len(label_lines) if label else 0,
                 role,
+                source_reference=_reference_name(graph, parents, edge.source_id),
+                target_reference=_reference_name(graph, parents, edge.target_id),
+                label_text="\n".join(label_lines),
+                font_size=style.label_font_size,
             )
         )
         weight = 3 if role == "flow" else 1
@@ -120,6 +125,7 @@ def make_request(graph, config) -> LayoutRequest:
         timeout=settings.timeout_seconds,
         engine_options=settings.engine_options,
         edge_routing=settings.edge_routing,
+        label_max_width=settings.label_max_width,
     )
     ancestors(request)
     # Opposing port banks must fit beside one another inside the device.
@@ -141,6 +147,17 @@ def make_request(graph, config) -> LayoutRequest:
     return request
 
 
+def _reference_name(graph, parents, node_id):
+    names = [graph.nodes[node_id].label]
+    seen = {node_id}
+    parent = parents.get(node_id)
+    while parent and parent not in seen:
+        seen.add(parent)
+        names.insert(0, graph.nodes[parent].label)
+        parent = parents.get(parent)
+    return f"{' / '.join(names)} [{node_id}]"
+
+
 def optimize(
     request: LayoutRequest, engine_name: str, candidates: int, fixed_sides: Dict[str, str]
 ) -> LayoutResult:
@@ -150,7 +167,10 @@ def optimize(
     best = None
     failures = []
     attempted = 0
-    candidate_key = crossing_quality_key if engine_name == "hybrid" else quality_key
+    candidate_key = (
+        reference_quality_key if engine_name == "crossing"
+        else crossing_quality_key if engine_name == "hybrid" else quality_key
+    )
     for index in range(candidates):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -160,12 +180,17 @@ def optimize(
             restore_parts(candidate_request, best.metrics)
         candidate_request.seed = index + 1
         candidate_request.timeout = remaining
+        candidate_deadline = deadline
+        if engine_name == "crossing":
+            share = remaining / (candidates - index)
+            candidate_request.timeout = share * .8
+            candidate_deadline = time.monotonic() + share
         # The hybrid engine performs its own orientation search so that its
         # crossing score uses the same endpoint order as the final straight
         # routes. Avoid reversing edges twice around that engine.
         reversed_edges = (
             _breadth_orientation(candidate_request, fixed_sides)
-            if engine_name != "hybrid" and index % 4 in {1, 2}
+            if engine_name not in {"hybrid", "crossing"} and index % 4 in {1, 2}
             else set()
         )
         if best is not None and index % 4 in {2, 3}:
@@ -192,9 +217,22 @@ def optimize(
             validate_result(request, result)
             if request.edge_routing != "straight":
                 place_labels(request, result)
-            template_trials = optimize_parts(scoring_request, result, candidate_key, deadline)
+            template_trials = optimize_parts(
+                scoring_request, result, candidate_key, candidate_deadline
+            )
+            if engine_name == "crossing":
+                from .references import select_connectors
+
+                # Template search can change both the conflicts and the space
+                # available for reference tags; choose again on final geometry.
+                previous = copy.deepcopy(result)
+                select_connectors(scoring_request, result, candidate_deadline)
+                if candidate_key(measure_quality(scoring_request, previous)) < candidate_key(
+                    measure_quality(scoring_request, result)
+                ):
+                    result = previous
             validate_result(request, result)
-            result.metrics = measure_quality(request, result)
+            result.metrics.update(measure_quality(request, result))
             if request.part_templates:
                 result.metrics["part_templates"] = describe_parts(scoring_request, result)
                 result.metrics["part_template_trials"] = template_trials
@@ -289,7 +327,7 @@ def _face_neighbors(request, result, fixed_sides):
 
 
 def existing_layout(graph, request, saved: Optional[LayoutResult]) -> LayoutResult:
-    """Recover current geometry, retaining routes only when all obstacles are unchanged."""
+    """Recover geometry and reference choices, marking affected references for rerouting."""
     boxes = {
         node.id: Box(node.x, node.y, node.width, node.height)
         for node in graph.nodes.values()
@@ -322,7 +360,25 @@ def existing_layout(graph, request, saved: Optional[LayoutResult]) -> LayoutResu
         ancestry = ancestors(request)
         for edge in request.edges:
             route = saved.routes.get(edge.id)
-            if not route or edge.source in changed or edge.target in changed:
+            if not route:
+                continue
+            allowed = {edge.source, edge.target} | ancestry[edge.source] | ancestry[edge.target]
+            if route.connectors:
+                # Keep the selected wire even when its endpoint moves. Its
+                # hidden full span is irrelevant to obstacle checks.
+                result.routes[edge.id] = copy.deepcopy(route)
+                if changed & allowed or any(
+                    overlaps(connector.label, boxes[key], 6)
+                    for connector in route.connectors
+                    for key in changed
+                ) or any(
+                    segment_hits_box(a, b, boxes[key])
+                    for key in changed - allowed
+                    for a, b in route_segments(route)
+                ):
+                    result.metrics.setdefault("_routes_to_refresh", []).append(edge.id)
+                continue
+            if edge.source in changed or edge.target in changed:
                 continue
             if request.edge_routing == "straight" and len(route.points) != 2:
                 continue
@@ -331,7 +387,6 @@ def existing_layout(graph, request, saved: Optional[LayoutResult]) -> LayoutResu
                 for a, b in zip(route.points, route.points[1:])
             ):
                 continue
-            allowed = {edge.source, edge.target} | ancestry[edge.source] | ancestry[edge.target]
             if any(
                 segment_hits_box(a, b, boxes[key])
                 for key in changed - allowed

@@ -126,11 +126,21 @@ Markdown also supports built-in `link` and `comment` node types. Nested `link` n
 | `tree.py` | Tree layout algorithm |
 | `wiring.py` | Compound device/port wiring layout and incremental placement |
 | `parts.py` | Automatic model-number grouping, shared port geometry, and collective template search |
-| `engines/` | Replaceable wiring engines; ELK and the crossing-aware hybrid adapter are built in |
+| `engines/` | Replaceable wiring engines: ELK, hybrid port/order sifting, and crossing device-position search |
+| `references.py` | Budgeted wire replacement, paired port references, and tag placement |
 
 **Key concept**: Tree, DAG, and freeform layout only run for nodes without positions. Saved geometry from `positions.json` is used as-is. Wiring layout also preserves saved positions; it places new devices and ports around that geometry and can reroute wires. Initial placement uses the configured layout algorithm.
 
 `layout.algorithm` selects the layout implementation. The default is `tree`, which preserves the existing Markdown and CSV behavior. Direct graphs default to `freeform` when no algorithm is declared. `dag` ranks nodes by configured dependency edge types such as `lineage`. `wiring` arranges compound devices, ports, and routed connections; see `docs/wiring-layout-guide.md`.
+
+The `crossing` engine uses an ELK compound seed, moves whole device subtrees in
+both axes, and alternates movement with greedy reference selection. A referenced
+`Route` retains its original endpoint span and includes two `Connector` records
+with visible leaders, tag boxes, text, and remote node IDs. Geometry consumers
+use `route_segments()` so hidden spans do not contribute to crossings or wire
+length. The exporter renders tags as edge decorations, with no generated graph
+nodes. Reference geometry is regenerated after device moves, and the viewer
+handles tag links by centering the corresponding port in the current scene.
 
 #### `excalidraw/` - Excalidraw Integration
 

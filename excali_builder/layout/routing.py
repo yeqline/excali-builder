@@ -5,7 +5,7 @@ import time
 from itertools import count
 from typing import List
 
-from .engines.base import Box, LayoutRequest, LayoutResult, Point, Route
+from .engines.base import Box, LayoutRequest, LayoutResult, Point, Route, route_segments
 from .quality import ancestors, overlaps, segment_hits_box, segment_intersection
 
 
@@ -29,6 +29,7 @@ def simplify(points: List[Point]) -> List[Point]:
 def route_straight(request: LayoutRequest, result: LayoutResult, edge_ids=None) -> None:
     """Connect endpoint boundaries with one segment while preserving node positions."""
     requested = set(edge_ids) if edge_ids is not None else {e.id for e in request.edges}
+    referenced = {key for key, route in result.routes.items() if route.connectors}
     result.routes = {
         key: route for key, route in result.routes.items() if key not in requested
     }
@@ -45,6 +46,10 @@ def route_straight(request: LayoutRequest, result: LayoutResult, edge_ids=None) 
                 _box_boundary_toward(target, source_center, -1),
             ]
         )
+    if referenced & requested:
+        from .references import refresh_connectors
+
+        refresh_connectors(request, result, referenced & requested)
     place_labels(request, result)
 
 
@@ -199,13 +204,13 @@ def _find_path(start, end, boxes, spacing, existing, deadline=None):
 
 def place_labels(request: LayoutRequest, result: LayoutResult) -> None:
     """Choose labels on route segments with the least interference and ample length."""
-    occupied = []
+    occupied = [c.label for route in result.routes.values() for c in route.connectors]
     all_segments = {
-        key: list(zip(route.points, route.points[1:])) for key, route in result.routes.items()
+        key: route_segments(route) for key, route in result.routes.items()
     }
     for edge in sorted(request.edges, key=lambda e: e.id):
         route = result.routes[edge.id]
-        if not edge.label_width:
+        if route.connectors or not edge.label_width:
             route.label = None
             continue
         candidates = (

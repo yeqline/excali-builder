@@ -158,12 +158,22 @@ class ExcaliBuilder:
     def _apply_wiring_layout(self, graph, config, folder, reset=False, compact=False):
         import time
 
-        from .layout.quality import crossing_quality_key, measure_quality, quality_key, validate_result
         from .layout.parts import describe_parts, optimize_parts
+        from .layout.quality import (
+            crossing_quality_key,
+            measure_quality,
+            quality_key,
+            reference_quality_key,
+            validate_result,
+        )
         from .layout.routing import place_labels, route_fixed
         from .layout.state import load_state, topology_signature
         from .layout.wiring import (
-            apply_result, existing_layout, make_request, optimize, place_additions,
+            apply_result,
+            existing_layout,
+            make_request,
+            optimize,
+            place_additions,
         )
 
         containers = {
@@ -199,28 +209,51 @@ class ExcaliBuilder:
                     node.metadata.pop(key, None)
 
         request = make_request(graph, config)
+        if config.layout.engine == "crossing":
+            from .layout.references import CrossingOptions
+
+            CrossingOptions.read(request)
+            if request.edge_routing != "straight":
+                raise ValueError("The crossing engine requires wiring.edge_routing: 'straight'")
         saved = None if reset else load_state(folder, topology_signature(graph, config))
+        references_need_selection = saved is None or saved.metrics.pop("_signature_changed", False)
         current = existing_layout(graph, request, saved)
         if not current.boxes:
             result = optimize(request, config.layout.engine, config.layout.wiring.candidates,
                               config.layout.wiring.port_sides)
         else:
             result = current
+            if config.layout.engine != "crossing":
+                for route in result.routes.values():
+                    route.connectors = []
             if len(current.boxes) != len(graph.nodes):
                 candidate = optimize(request, config.layout.engine, 1, config.layout.wiring.port_sides)
                 place_additions(request, result, candidate)
                 apply_result(graph, result)
                 result = existing_layout(graph, request, saved)
             missing_routes = {edge.id for edge in request.edges} - set(result.routes)
+            missing_routes.update(result.metrics.pop("_routes_to_refresh", []))
             if missing_routes:
                 route_fixed(request, result, missing_routes)
-            elif any(edge.label_width and not result.routes[edge.id].label for edge in request.edges):
+            elif any(
+                edge.label_width and not result.routes[edge.id].label
+                and not result.routes[edge.id].connectors
+                for edge in request.edges
+            ):
                 place_labels(request, result)
             if result.metrics.get("part_template_search_required"):
-                key = crossing_quality_key if config.layout.engine == "hybrid" else quality_key
+                references_need_selection = True
+                key = (
+                    reference_quality_key if config.layout.engine == "crossing"
+                    else crossing_quality_key if config.layout.engine == "hybrid" else quality_key
+                )
                 optimize_parts(request, result, key, time.monotonic() + request.timeout)
+            if config.layout.engine == "crossing" and references_need_selection:
+                from .layout.references import select_connectors
+
+                select_connectors(request, result, time.monotonic() + request.timeout)
             validate_result(request, result)
-            result.metrics = measure_quality(request, result)
+            result.metrics.update(measure_quality(request, result))
             result.metrics["engine"] = config.layout.engine
             if request.part_templates:
                 result.metrics["part_templates"] = describe_parts(request, result)

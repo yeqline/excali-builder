@@ -50,6 +50,10 @@ class LayoutEdge:
     label_width: float = 0
     label_height: float = 0
     role: str = "flow"
+    source_reference: str = ""
+    target_reference: str = ""
+    label_text: str = ""
+    font_size: float = 14
 
 
 @dataclass
@@ -67,12 +71,30 @@ class LayoutRequest:
     engine_options: Dict[str, Any] = field(default_factory=dict)
     edge_routing: str = "straight"
     part_templates: Dict[str, PartTemplate] = field(default_factory=dict)
+    label_max_width: float = 220
+
+
+@dataclass
+class Connector:
+    """One outward stub and a clickable reference to the remote endpoint."""
+
+    points: List[Point]
+    label: Box
+    text: str
+    target: str
 
 
 @dataclass
 class Route:
     points: List[Point]
     label: Optional[Box] = None
+    connectors: List[Connector] = field(default_factory=list)
+
+
+def route_segments(route: Route):
+    """The visible segments; the logical span of a referenced wire is not drawn."""
+    paths = [connector.points for connector in route.connectors] or [route.points]
+    return [segment for points in paths for segment in zip(points, points[1:])]
 
 
 @dataclass

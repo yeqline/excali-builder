@@ -9,6 +9,7 @@ A Python tool that generates [Excalidraw](https://excalidraw.com/) diagrams from
 - **Type-based styling**: Define visual styles per node/edge type in config files
 - **Deterministic initial layout**: Fresh builds use free-form, tree, DAG, or port-aware wiring placement
 - **Optimize wiring diagrams**: Arrange devices, ports, and readable straight connections with replaceable layout engines; orthogonal routing remains available when obstacle avoidance matters. CSV model numbers automatically enforce one optimized arrangement across identical parts, matching ports by their existing names. Restore the preceding layout with one action. See the [wiring layout guide](docs/wiring-layout-guide.md).
+- **Reduce wiring clutter**: The `crossing` engine searches device positions in both axes and can replace a limited number of difficult wires with paired, clickable device/port references while preserving their electrical connections.
 - **Multiple rendering modes for edges**: Draw arrows with `line`, visually group nodes with `group`, or draw enclosing groups with `enclosing_group`
 - **Visible relationship labels**: Render non-empty line-edge labels by default, with per-type styling and opt-out
 - **Built-in Markdown link/comment nodes**: Create clickable resource nodes or annotation nodes with default styling
@@ -80,6 +81,8 @@ uv run excali-builder --full-refresh path/to/your-diagram-folder
 uv run excali-builder optimize path/to/your-diagram-folder --engine elk
 # Use the crossing-aware alternative for straight-line wiring
 uv run excali-builder optimize path/to/your-diagram-folder --engine hybrid
+# Search positions in both axes and allow a small budget of reference connections
+uv run excali-builder optimize path/to/your-diagram-folder --engine crossing
 
 # Restore the layout from immediately before that optimization
 uv run excali-builder restore-layout path/to/your-diagram-folder

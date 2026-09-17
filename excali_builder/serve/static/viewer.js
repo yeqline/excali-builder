@@ -201,7 +201,8 @@ function App() {
       await loadDiagram(true);
       if (!restore) fitDiagram(api);
       if (payload.metrics) {
-        setDetail(`${payload.metrics.crossings} crossings`);
+        const references = payload.metrics.reference_connections || 0;
+        setDetail(`${payload.metrics.crossings} crossings${references ? ` · ${references} reference connections` : ""}`);
       }
     } catch (error) {
       setStatus("error");
@@ -421,6 +422,7 @@ function App() {
         onChange: handleChange,
         onPointerUpdate: handlePointerUpdate,
         onScrollChange: handleScrollChange,
+        onLinkOpen: (element, event) => followWiringReference(api, element, event),
         autoFocus: true,
         theme: "light",
         UIOptions: {
@@ -431,6 +433,22 @@ function App() {
       }),
     ),
   );
+}
+
+function followWiringReference(api, element, event) {
+  const targetId = element.customData?.reference_target;
+  if (!targetId || !api) return;
+  const target = api.getSceneElements().find((item) =>
+    !item.isDeleted && item.type !== "text" && item.customData?.node_id === targetId);
+  if (!target) return;
+  event.preventDefault();
+  const state = api.getAppState();
+  const zoom = state.zoom?.value || 1;
+  api.updateScene({ appState: {
+    scrollX: (state.width || window.innerWidth) / (2 * zoom) - target.x - target.width / 2,
+    scrollY: (state.height || window.innerHeight) / (2 * zoom) - target.y - target.height / 2,
+    selectedElementIds: { [target.id]: true },
+  } });
 }
 
 function getViewportCenter(appState) {
