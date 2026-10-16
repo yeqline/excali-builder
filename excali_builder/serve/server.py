@@ -51,6 +51,7 @@ class ServeState:
         self._pointer: Optional[Dict[str, float]] = None
         self._pointer_updated_at: Optional[float] = None
         self._viewport_center: Optional[Dict[str, float]] = None
+        self.layout_revision = 0
 
     @property
     def output_path(self) -> Path:
@@ -107,25 +108,104 @@ class ServeState:
         if not isinstance(elements, list):
             raise ValueError("layout payload must include an elements array")
 
+        from ..config.loader import ConfigLoader
+        from ..layout.state import STATE_FILE, atomic_json
+
         self.notify({"type": "saving-layout"})
         with self.lock:
-            positions = save_viewer_layout(self.folder, elements)
-            if positions:
-                self.builder.build_from_folder(
-                    str(self.folder),
-                    placement_context=self.get_placement_anchor(),
-                )
+            self._check_layout_revision(payload)
+            before = {
+                name: json.loads((self.folder / name).read_text())
+                if (self.folder / name).exists() else None
+                for name in ("positions.json", "output.excalidraw", STATE_FILE)
+            }
+            try:
+                positions = save_viewer_layout(self.folder, elements)
+                if positions:
+                    self.builder.build_from_folder(
+                        str(self.folder),
+                        placement_context=self.get_placement_anchor(),
+                    )
+            except Exception:
+                for name, content in before.items():
+                    path = self.folder / name
+                    if content is not None:
+                        atomic_json(path, content)
+                    elif path.exists():
+                        path.unlink()
+                raise
+            finally:
                 if self.watch_state is not None:
                     self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                     self.watch_state.mark_internal_write(self.output_path)
                     self.watch_state.refresh()
+            result = {
+                "type": "layout-saved",
+                "saved_nodes": sorted(positions),
+                "saved_count": len(positions),
+                "revision": self.layout_revision,
+            }
+            if ConfigLoader.load_from_folder(self.folder).layout.algorithm == "wiring":
+                result["scene"] = json.loads(self.output_path.read_text(encoding="utf-8"))
+        self.notify({key: value for key, value in result.items() if key != "scene"})
+        return result
 
-        result = {
-            "type": "layout-saved",
-            "saved_nodes": sorted(positions),
-            "saved_count": len(positions),
+    def _check_layout_revision(self, payload):
+        revision = payload.get("revision")
+        if revision is None:
+            if self.layout_revision:
+                raise ValueError("The diagram changed. Reload it before saving this layout.")
+            return
+        if revision != self.layout_revision:
+            raise ValueError("The diagram changed. Reload it before saving this layout.")
+
+    def layout_options(self):
+        from ..config.loader import ConfigLoader
+        from ..layout.engines import available_engines
+        from ..layout.operations import BACKUP_FILE, can_optimize_wiring
+
+        config = ConfigLoader.load_from_folder(self.folder)
+        raw = {}
+        config_path = self.folder / "config.json"
+        if config_path.exists():
+            try:
+                loaded = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    raw = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        return {
+            "engines": available_engines(),
+            "engine": config.layout.engine,
+            "algorithm": config.layout.algorithm,
+            "parser_type": raw.get("parser_type") or "csv",
+            "revision": self.layout_revision,
+            "can_restore": (self.folder / BACKUP_FILE).exists(),
+            "can_optimize": can_optimize_wiring(raw),
         }
-        self.notify(result)
+
+    def optimize_layout(self, payload, restore=False):
+        from ..layout.operations import optimize_folder, restore_folder
+
+        with self.lock:
+            self._check_layout_revision(payload)
+            elements = payload.get("elements")
+            if elements is not None and not isinstance(elements, list):
+                raise ValueError("layout payload must include an elements array")
+            self.notify({"type": "optimizing-layout"})
+            result = (restore_folder(self.folder) if restore else
+                      optimize_folder(self.folder, payload.get("engine"), elements))
+            self.layout_revision += 1
+            result["revision"] = self.layout_revision
+            if self.watch_state is not None:
+                self.watch_state.mark_internal_write(self.output_path)
+                self.watch_state.refresh()
+            revision = self.layout_revision
+        self.notify({
+            "type": "built",
+            "reason": "restore-layout" if restore else "optimized-layout",
+            "revision": revision,
+        })
         return result
 
     def update_placement_context(self, payload: Dict[str, Any]) -> None:
@@ -165,7 +245,9 @@ class ServeState:
         """Sync positions from an externally saved output.excalidraw file."""
         with self.lock:
             self.builder.sync_from_folder(str(self.folder))
-        self.notify({"type": "built", "reason": "external-output"})
+            self.layout_revision += 1
+            revision = self.layout_revision
+        self.notify({"type": "built", "reason": "external-output", "revision": revision})
 
     def _build(self, reason: str, sync_first: bool) -> None:
         self.notify({"type": "rebuilding", "reason": reason})
@@ -178,11 +260,13 @@ class ServeState:
                     placement_context=self.get_placement_anchor(),
                 )
             )
+            self.layout_revision += 1
+            revision = self.layout_revision
             if self.watch_state is not None:
                 self.watch_state.set_extra_paths(self._get_extra_watch_paths())
                 self.watch_state.mark_internal_write(output_path)
                 self.watch_state.refresh()
-        self.notify({"type": "built", "reason": reason})
+        self.notify({"type": "built", "reason": reason, "revision": revision})
 
     def _get_extra_watch_paths(self) -> List[Path]:
         config_path = self.folder / "config.json"
@@ -273,6 +357,9 @@ def _make_handler(state: ServeState):
             if parsed.path == "/events":
                 self._serve_events()
                 return
+            if parsed.path == "/layout-options":
+                self._send_json(state.layout_options())
+                return
             if parsed.path.startswith("/static/"):
                 relative_path = parsed.path[len("/static/"):]
                 self._serve_static(static_root / relative_path)
@@ -284,13 +371,15 @@ def _make_handler(state: ServeState):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path not in {"/layout", "/placement-context"}:
+            if parsed.path not in {"/layout", "/placement-context", "/optimize-layout", "/restore-layout"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             try:
                 payload = self._read_json_body()
-                if parsed.path == "/placement-context":
+                if parsed.path in {"/optimize-layout", "/restore-layout"}:
+                    result = state.optimize_layout(payload, restore=parsed.path == "/restore-layout")
+                elif parsed.path == "/placement-context":
                     state.update_placement_context(payload)
                     result = {"ok": True}
                 else:

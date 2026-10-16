@@ -45,7 +45,11 @@ Thumbs.db
 # Generated files
 *.excalidraw
 positions.json
+wiring-layout.json
+layout-backup.json
 
-# Examples (kept locally for testing, not in git)
-examples/
+# Local examples; retain the shared-parts reference fixture in Git.
+examples/*
+!examples/shared-parts-diagram/
 
+node_modules/

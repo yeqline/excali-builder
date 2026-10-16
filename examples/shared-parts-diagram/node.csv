@@ -1,0 +1,13 @@
+node_id,node_type,node_title,node_text,model_number
+motor_x,motor,X motor,Closed-loop stepper,stepper
+motor_x_encoder,port,ENCODER,Encoder lead,
+motor_x_phase,port,A+ A- B+ B-,Four motor conductors,
+motor_y,motor,Y motor,Closed-loop stepper,stepper
+motor_y_encoder,port,ENCODER,Encoder lead,
+motor_y_phase,port,A+ A- B+ B-,Four motor conductors,
+driver_x,driver,X driver,Closed-loop driver,driver
+driver_x_encoder,port,ENCODER,Feedback input,
+driver_x_phase,port,A+ A- B+ B-,Motor output,
+driver_y,driver,Y driver,Closed-loop driver,driver
+driver_y_encoder,port,ENCODER,Feedback input,
+driver_y_phase,port,A+ A- B+ B-,Motor output,

@@ -87,3 +87,34 @@ body {
   font: 500 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
 }
+
+.layout-controls {
+  position: absolute;
+  z-index: 10;
+  left: 16px;
+  bottom: 64px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 12px #0002;
+}
+
+.layout-controls button,
+.layout-controls select {
+  padding: 7px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 5px;
+  background: #f8fafc;
+  color: #344054;
+  font: 500 12px/1.4 system-ui, sans-serif;
+}
+
+.layout-controls button:enabled { cursor: pointer; }
+.layout-controls button:disabled { opacity: 0.5; }
+.layout-busy { pointer-events: none; opacity: 0.65; }
+.status-pill[data-state="optimizing layout"]::before,
+.status-pill[data-state="restoring layout"]::before { background: #fdb022; }

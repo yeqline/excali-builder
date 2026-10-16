@@ -1,0 +1,5 @@
+{
+  "parent_child": {"connection_type": "enclosing_group"},
+  "phase": {"connection_type": "line", "color": "#166534"},
+  "encoder": {"connection_type": "line", "color": "#0F766E", "arrow_end": "arrow"}
+}

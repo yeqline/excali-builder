@@ -1,6 +1,7 @@
 """Sync system: Update positions.json from Excalidraw file."""
 
 from pathlib import Path
+import json
 
 from .importer import ExcalidrawImporter
 from .positions import merge_positions
@@ -34,3 +35,9 @@ class ExcalidrawSync:
 
         # Merge: update existing with new positions, keep any that weren't in Excalidraw.
         merge_positions(folder_path / "positions.json", positions)
+        from ..layout.state import STATE_FILE, capture_edited_routes
+
+        if (folder_path / STATE_FILE).exists():
+            scene = json.loads(excalidraw_path.read_text(encoding="utf-8"))
+            elements = scene.get("elements", [])
+            capture_edited_routes(folder_path, elements, elements)
